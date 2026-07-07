@@ -1,0 +1,2 @@
+description: Swift port of the sah `shell` MCP tool onto FoundationModelsOperations — execute command / list processes / kill process / grep history / get lines, macOS 26+ only.
+name: FoundationModelsShelltool

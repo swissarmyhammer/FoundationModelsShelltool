@@ -108,8 +108,8 @@ comments:
   timestamp: 2026-07-15T20:30:29.095622+00:00
 depends_on:
 - 01KWYJ2FNNZ1HD5TP11KVA4DTN
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8380'
 title: ShellState + log store
 ---
 ## What

@@ -57,6 +57,31 @@ comments:
 
     Files: Sources/ShellTool/ShellContext.swift, Sources/ShellTool/Operations/ExecuteCommand.swift, Tests/ShellToolTests/ExecuteCommandTests.swift (8 tests). Ready for /review.
   timestamp: 2026-07-15T21:00:32.155303+00:00
+- actor: claude-code
+  id: 01kxkstfe7rt4pgdjyd19bhn3j
+  text: 'Iteration 1 review (complete pass, 14/14): 1 finding (15:xx) — ExecuteResult.commandId Swift property should be commandID (acronym casing). NUANCE: the task''s acceptance criteria pin the JSON field name as `commandId`, so the fix is to rename the Swift property/init param to commandID AND add an explicit CodingKeys mapping `case commandID = "commandId"` to keep the emitted JSON key unchanged — satisfies both the casing rule and the JSON-shape criterion (not a contradiction; same technique as isValidationEnabled on ShellPolicy). Task stayed in `review`. Starting implement iteration.'
+  timestamp: 2026-07-15T21:09:46.055006+00:00
+- actor: claude-code
+  id: 01kxkt12wtwv9nttb790m5zts8
+  text: |-
+    Review finding resolved. Renamed the Swift symbol to correct acronym casing while preserving the JSON wire contract.
+
+    Renames (ExecuteResult in Sources/ShellTool/Operations/ExecuteCommand.swift):
+    - property `commandId` -> `commandID`
+    - memberwise-init call site in result(for:in:) -> `commandID: outcome.commandID`
+    - two test init call sites in Tests/ShellToolTests/ExecuteCommandTests.swift -> `commandID:`
+
+    JSON wire contract preserved via an explicit CodingKeys enum on ExecuteResult (same technique as ShellSettings.isValidationEnabled = "enable_validation"):
+      case commandID = "commandId"  // Swift symbol correct, JSON key unchanged
+      case status / exitCode / lines / durationMs / output / outputNote  // declared explicitly to pin their current synthesized names
+    No custom encode(to:) — the compiler still synthesizes encodeIfPresent for the optional outputNote, so nil outputNote stays omitted. The JSON-shape snapshot test (executeResultEncodesTheExpectedFieldNames) asserts every key verbatim and still passes unchanged; its `commandId` string assertions were left as-is.
+
+    Root-cause sweep: grep `[a-z]Id\b` over Sources/ShellTool now finds only the doc comment and the CodingKeys raw-string literal (both the wire key, not symbols). ShellContext.swift had no violations. `outcome.commandID` (ShellRunner.Outcome) was already correctly cased. No other rename sites.
+
+    Verification: swift test => 71 tests in 6 suites passed, 0 failures. swift build --build-tests => 0 warnings/0 errors. No leaked /bin/sh processes. Adversarial double-check: PASS.
+
+    Left in `doing` for /review.
+  timestamp: 2026-07-15T21:13:22.586087+00:00
 depends_on:
 - 01KWYJ2X4G62CNVVCZZP15SXER
 - 01KWYJ3DKZTTR3VYT7MFZTQ0G3
@@ -90,3 +115,7 @@ Define `ShellContext` (the shared bundle of `ShellState` actor + `ShellRunner` +
 
 ## Workflow
 - Use `/tdd` — write the dispatch test first, then build `ShellContext` and the execute pipeline to go GREEN.
+
+## Review Findings (2026-07-15 16:03)
+
+- [x] `Sources/ShellTool/Operations/ExecuteCommand.swift:212` — Property name `commandId` uses mixed-case for the acronym ID. Per the casing rule, ID must be uniformly all-upper when interior to a lowerCamelCase name, not `Id`. Rename to `commandID` and update the initializer parameter on line 131.

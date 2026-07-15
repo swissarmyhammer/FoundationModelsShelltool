@@ -125,7 +125,7 @@ extension ExecuteCommand {
             : nil
 
         return ExecuteResult(
-            commandId: outcome.commandID,
+            commandID: outcome.commandID,
             status: (record?.status ?? outcome.status).rawValue,
             exitCode: record?.exitCode ?? outcome.exitCode,
             lines: total,
@@ -207,7 +207,7 @@ internal enum ExecuteOutput: Encodable, Sendable, Equatable {
 /// only when the stored output was truncated to the tail.
 internal struct ExecuteResult: Encodable, Sendable, Equatable {
     /// The command's `ShellState`-assigned 1-based id, for later `get lines`.
-    let commandId: Int
+    let commandID: Int
     /// Final status: `completed`, `timed_out`, or `killed`.
     let status: String
     /// Process exit code; `-1` for a timeout or signal death.
@@ -221,4 +221,19 @@ internal struct ExecuteResult: Encodable, Sendable, Equatable {
     /// A note carrying the "showing last N of M" tail advisory, present only
     /// when the full output exceeded the tail; `nil` (and omitted) otherwise.
     let outputNote: String?
+
+    /// The Swift property `commandID` uses correct acronym casing, but its
+    /// encoded JSON key stays `commandId` — the wire contract the model reads
+    /// and the JSON-shape acceptance criterion pins. The remaining keys are
+    /// declared explicitly so they keep their current synthesized names.
+    /// (Same technique as `ShellSettings.isValidationEnabled = "enable_validation"`.)
+    enum CodingKeys: String, CodingKey {
+        case commandID = "commandId"
+        case status
+        case exitCode
+        case lines
+        case durationMs
+        case output
+        case outputNote
+    }
 }

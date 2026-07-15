@@ -146,7 +146,7 @@ import Testing
         encoder.outputFormatting = [.sortedKeys]
 
         let withNote = ExecuteResult(
-            commandId: 7,
+            commandID: 7,
             status: "completed",
             exitCode: 0,
             lines: 40,
@@ -166,7 +166,7 @@ import Testing
 
         // A nil `outputNote` is omitted entirely (synthesized `encodeIfPresent`).
         let withoutNote = ExecuteResult(
-            commandId: 1,
+            commandID: 1,
             status: "completed",
             exitCode: 0,
             lines: 1,

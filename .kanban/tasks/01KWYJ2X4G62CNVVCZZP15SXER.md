@@ -52,6 +52,10 @@ comments:
 
     Finding checklist flipped to [x]. Task left GREEN in `doing` for /review.
   timestamp: 2026-07-15T14:18:35.458440+00:00
+- actor: claude-code
+  id: 01kxk2yf62r0tbcgj9t0388wje
+  text: Resolved review finding (2026-07-15 09:22). Added `#expect(commands[0].completedAt != nil)` after the `.killed` status check on the stored record in `registerThenKillProcessKillsChildMarksKilledAndDropsIt`, mirroring `completeCommandSetsStatusAndExitCode`. swift build exit 0; swift test 20 tests / 2 suites / 0 failures. Finding checkbox flipped to [x]. Leaving task GREEN in `doing` for /review.
+  timestamp: 2026-07-15T14:29:59.618280+00:00
 depends_on:
 - 01KWYJ2FNNZ1HD5TP11KVA4DTN
 position_column: doing
@@ -93,3 +97,8 @@ Implement `ShellState` (an `actor`) and its log store in `Sources/ShellTool/Shel
 
 - [x] `Tests/ShellToolTests/ShellStateTests.swift:274` — registerProcess writes to the processes dictionary, but killProcess reads from it — the happy path where a process is registered and then killed is never tested. The only killProcess test (line 274) is the error case without a prior registerProcess. This leaves the registerProcess→killProcess pair untested in the success case. Add a test that calls registerProcess(commandId: 1, pid: <valid_pid>) then killProcess(commandId: 1), verifying the process is found and the command is marked killed. Alternatively, if the interface is not meant to be tested together (e.g., killpg would fail on an invalid PID), document why the round-trip test is omitted.
   - Resolved: added `registerThenKillProcessKillsChildMarksKilledAndDropsIt` — spawns a real `/bin/sleep` in its own process group via `posix_spawn(POSIX_SPAWN_SETPGROUP)`, registers its real pid, calls `killProcess`, and asserts the returned record is `.killed` with `completedAt` set, `listCommands` reflects `.killed`, the process entry is dropped (a second `killProcess` throws `noRunningProcess`), and `waitpid` confirms the child was actually SIGKILL-terminated (`status & 0x7f == SIGKILL`). Deterministic (blocking `waitpid`, no timing races). swift build + swift test green (20 tests, 2 suites, 0 failures).
+
+## Review Findings (2026-07-15 09:22)
+
+- [x] `Tests/ShellToolTests/ShellStateTests.swift:276` — The test verifies completedAt is set on the return value of killProcess() but doesn't verify it on the stored record from listCommands(). The completeCommandSetsStatusAndExitCode() test verifies completedAt on the stored record; the killProcess test should do likewise to consistently test the invariant that completedAt is set when any command completes. Add #expect(commands[0].completedAt != nil) after the status check to verify completedAt is persisted to the stored record.
+  - Resolved: added `#expect(commands[0].completedAt != nil)` immediately after the `commands[0].status == .killed` check in `registerThenKillProcessKillsChildMarksKilledAndDropsIt`, mirroring `completeCommandSetsStatusAndExitCode`. The "completedAt is set when a command completes" invariant is now exercised on the persisted record for the kill path too. swift build + swift test green (20 tests, 2 suites, 0 failures).

@@ -349,6 +349,7 @@ import Testing
         // The stored record reflects the kill too.
         let commands = await state.listCommands()
         #expect(commands[0].status == .killed)
+        #expect(commands[0].completedAt != nil)
 
         // The running-process entry was dropped: a second kill finds nothing to
         // signal and surfaces the no-running-process error.

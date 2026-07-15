@@ -37,6 +37,21 @@ comments:
   id: 01kxk1c814xeg9ktbrxfa34rmf
   text: 'Implement landed green in `doing`. Created Sources/ShellTool/ShellState.swift (actor + CommandRecord/CommandStatus/LogLine/GrepResult(s)/ShellStateError) and Tests/ShellToolTests/ShellStateTests.swift (19 tests). Ported for parity with Rust state.rs: session-scoped log store, monotonic 1-based cmd ids, continuing stdout→stderr line counter, .shell/.gitignore self-ignore, read-only-cwd fallback to tmp, getLines/grep prefix-filtered scans, grep trims trailing whitespace (Rust trim_end parity), getLines strips trailing \r (CRLF parity) but keeps spaces. swift build + swift test both exit 0 (19 tests, 2 suites). Next: /test, checkpoint commit, /review.'
   timestamp: 2026-07-15T14:02:33.892910+00:00
+- actor: claude-code
+  id: 01kxk29k22tsyfr5gctg6hp9ps
+  text: |-
+    Pulled back from review to doing to resolve the open review finding (untested registerProcess→killProcess success path).
+
+    Fix (Tests/ShellToolTests/ShellStateTests.swift only):
+    - Added private helper `spawnKillableChild()` — `posix_spawn`s `/bin/sleep 60` in its own process group (POSIX_SPAWN_SETPGROUP, pgroup 0) so pgid == child pid, mirroring the executor's `process_group(0)` (Rust parity). Returns the real pid.
+    - Added test `registerThenKillProcessKillsChildMarksKilledAndDropsIt`: startCommand → spawnKillableChild → registerProcess(real pid); asserts child alive (kill(pid,0)==0); killProcess returns record `.killed` with completedAt set; listCommands()[0].status == .killed; a SECOND killProcess throws (proves processes[commandId] was dropped — only the `noRunningProcess` guard is reachable); waitpid reaps and (status & 0x7f) == SIGKILL confirms a genuine SIGKILL round-trip, not a fake/synthetic PID. Deterministic — blocking waitpid, no sleeps racing the assertion.
+
+    Kept `#expect(throws: (any Error).self)` to match the sibling error-case test's prevailing pattern.
+
+    really-done gate: swift build exit 0; swift test 20/20 passed, 2 suites, exit 0. Adversarial double-check returned PASS (verified isolation is safe, SIGKILL detection correct on Darwin, no flakiness, second-kill-throws genuinely proves map removal, no zombie leak).
+
+    Finding checklist flipped to [x]. Task left GREEN in `doing` for /review.
+  timestamp: 2026-07-15T14:18:35.458440+00:00
 depends_on:
 - 01KWYJ2FNNZ1HD5TP11KVA4DTN
 position_column: doing
@@ -73,3 +88,8 @@ Implement `ShellState` (an `actor`) and its log store in `Sources/ShellTool/Shel
 
 ## Workflow
 - Use `/tdd` — write each test above first (RED), then implement `ShellState` incrementally to go GREEN.
+
+## Review Findings (2026-07-15 09:05)
+
+- [x] `Tests/ShellToolTests/ShellStateTests.swift:274` — registerProcess writes to the processes dictionary, but killProcess reads from it — the happy path where a process is registered and then killed is never tested. The only killProcess test (line 274) is the error case without a prior registerProcess. This leaves the registerProcess→killProcess pair untested in the success case. Add a test that calls registerProcess(commandId: 1, pid: <valid_pid>) then killProcess(commandId: 1), verifying the process is found and the command is marked killed. Alternatively, if the interface is not meant to be tested together (e.g., killpg would fail on an invalid PID), document why the round-trip test is omitted.
+  - Resolved: added `registerThenKillProcessKillsChildMarksKilledAndDropsIt` — spawns a real `/bin/sleep` in its own process group via `posix_spawn(POSIX_SPAWN_SETPGROUP)`, registers its real pid, calls `killProcess`, and asserts the returned record is `.killed` with `completedAt` set, `listCommands` reflects `.killed`, the process entry is dropped (a second `killProcess` throws `noRunningProcess`), and `waitpid` confirms the child was actually SIGKILL-terminated (`status & 0x7f == SIGKILL`). Deterministic (blocking `waitpid`, no timing races). swift build + swift test green (20 tests, 2 suites, 0 failures).

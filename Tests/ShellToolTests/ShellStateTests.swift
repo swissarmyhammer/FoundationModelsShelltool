@@ -22,6 +22,34 @@ import Testing
         try ShellState(preferredDirectory: tmp.appendingPathComponent(".shell"))
     }
 
+    /// Failure spawning the child used by the `killProcess` round-trip test.
+    private enum SpawnError: Error { case attrInit, spawn(Int32) }
+
+    /// Spawn a real, long-lived `/bin/sleep` child in its **own** process group
+    /// (so its process-group id equals its pid), mirroring how the executor
+    /// launches commands (`process_group(0)`, parity with the Rust reference).
+    ///
+    /// This is what makes the `killProcess` test a genuine round-trip: the
+    /// group-directed `killpg(pid, SIGKILL)` inside `killProcess` targets only
+    /// this child, never the test runner's own process group. Returns the
+    /// child's pid, which doubles as its process-group id.
+    private func spawnKillableChild(seconds: String = "60") throws -> pid_t {
+        var attr: posix_spawnattr_t?
+        guard posix_spawnattr_init(&attr) == 0 else { throw SpawnError.attrInit }
+        defer { posix_spawnattr_destroy(&attr) }
+        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP))
+        posix_spawnattr_setpgroup(&attr, 0)
+
+        let path = "/bin/sleep"
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(path), strdup(seconds), nil]
+        defer { for case let arg? in argv { free(arg) } }
+
+        var pid: pid_t = 0
+        let rc = posix_spawn(&pid, path, nil, &attr, argv, environ)
+        guard rc == 0 else { throw SpawnError.spawn(rc) }
+        return pid
+    }
+
     // MARK: - Storage round-trip
 
     @Test func storageRoundTripWritesAndReadsBackLines() async throws {
@@ -297,5 +325,42 @@ import Testing
         await #expect(throws: (any Error).self) {
             _ = try await state.killProcess(commandId: 1)
         }
+    }
+
+    /// The `registerProcess` → `killProcess` happy path: a real, running child
+    /// is registered, killed, marked `.killed`, and dropped from the running
+    /// process map — the round-trip the error-only test above never exercises.
+    @Test func registerThenKillProcessKillsChildMarksKilledAndDropsIt() async throws {
+        let tmp = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let state = try makeState(in: tmp)
+
+        let id = await state.startCommand("sleep 60")
+        let pid = try spawnKillableChild()
+        await state.registerProcess(commandId: id, pid: pid)
+
+        // The child is genuinely alive before we kill it.
+        #expect(kill(pid, 0) == 0)
+
+        let record = try await state.killProcess(commandId: id)
+        #expect(record.status == .killed)
+        #expect(record.completedAt != nil)
+
+        // The stored record reflects the kill too.
+        let commands = await state.listCommands()
+        #expect(commands[0].status == .killed)
+
+        // The running-process entry was dropped: a second kill finds nothing to
+        // signal and surfaces the no-running-process error.
+        await #expect(throws: (any Error).self) {
+            _ = try await state.killProcess(commandId: id)
+        }
+
+        // Genuine round-trip: reap the child (blocks until it exits — no timing
+        // races) and confirm SIGKILL actually terminated it.
+        var status: Int32 = 0
+        let reaped = waitpid(pid, &status, 0)
+        #expect(reaped == pid)
+        #expect((status & 0x7f) == SIGKILL)
     }
 }

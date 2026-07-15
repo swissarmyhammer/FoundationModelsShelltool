@@ -38,7 +38,7 @@ comments:
 
     Finding checklist item flipped to [x]. Leaving task GREEN in doing for the reviewer.
   timestamp: 2026-07-15T13:24:58.080547+00:00
-position_column: doing
+position_column: done
 position_ordinal: '80'
 title: Package scaffolding
 ---

@@ -20,25 +20,26 @@ import Foundation
 import FoundationModels
 import Operations
 
-/// The fused `shell` `OperationTool`'s public factory and shared naming — the
-/// full-stack analogue of the upstream `NotesTool`: the five `@Operation`
+/// The fused `shell` `OperationTool`'s public factory and shared naming.
+///
+/// The full-stack analogue of the upstream `NotesTool`: the five `@Operation`
 /// operations fused by `OperationTool` and driven by both an
 /// `OperationCLIDriver` and a `LanguageModelSession`.
 public enum ShellTool {
-    /// The fused tool's model- and CLI-facing name. Parity with the Rust
-    /// `ShellExecuteTool::name`.
+    /// The fused tool's model- and CLI-facing name.
+    ///
+    /// Parity with the Rust `ShellExecuteTool::name`.
     public static let name = "shell"
 
-    /// A human- and model-facing summary of the fused tool, byte-identical to
-    /// the Rust `ShellExecuteTool::description`.
+    /// A human- and model-facing summary of the fused tool, byte-identical to the Rust `ShellExecuteTool::description`.
     public static let description =
         "Virtual shell with history and process management. Execute commands, grep output history, and manage running processes."
 
-    /// Builds the fused `shell` tool over a freshly assembled default
-    /// `ShellContext` — the contextless entry point the `shell-demo`
-    /// executable (and any other embedder without `@testable` access) uses,
-    /// since `ShellContext` and `ShellState` are module-internal and cannot be
-    /// constructed from outside.
+    /// Builds the fused `shell` tool over a freshly assembled default `ShellContext`.
+    ///
+    /// The contextless entry point the `shell-demo` executable (and any other
+    /// embedder without `@testable` access) uses, since `ShellContext` and
+    /// `ShellState` are module-internal and cannot be constructed from outside.
     ///
     /// The context bundles a `ShellState` over `preferredDirectory` and a
     /// default `ShellPolicy` (the stacked builtin/user/project overlays). This

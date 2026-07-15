@@ -55,6 +55,24 @@ comments:
 
     Verified: swift build clean (exit 0, 0 warnings incl. shell-demo), swift test green (10 suites / 109 tests, 0 failures, 0 warnings), no leaked subprocesses (ps shows none). Left in doing for /review.
   timestamp: 2026-07-15T23:10:33.251308+00:00
+- actor: claude-code
+  id: 01kxm1c40w7jz2ac0swmatgjh9
+  text: 'Iteration 2 review (complete pass, 14/14): prior 3 findings resolved (executableName extracted, both make() docs present). 4 NEW findings (18:15) — all doc-comment FORMATTING in ShellTool.swift (:23, :28, :32, :37): (a) the summary''s first `///` line must be a single sentence ending in a period; (b) a blank `///` line must separate the summary from elaboration. Distinct from the prior missing-doc findings. Task stayed in `review`. Starting implement iteration: normalize ALL doc comments in the file to the two-part convention (period-terminated one-line summary, blank ///, then body), matching the sibling files'' style that passed review.'
+  timestamp: 2026-07-15T23:21:44.220846+00:00
+- actor: claude-code
+  id: 01kxm1h9dv6q4rzbnrj47htx61
+  text: |-
+    Review findings (18:15) worked and all 4 checkboxes flipped to [x].
+
+    Normalized EVERY doc comment in Sources/ShellTool/ShellTool.swift to the two-part shape (one-sentence period-terminated summary on the first /// line, blank /// line, then elaboration/params), matching the sibling ShellPolicy/ShellRunner convention:
+    - ShellTool enum: split "public factory and shared naming." summary from the "full-stack analogue..." elaboration with a blank ///.
+    - name: split "The fused tool's model- and CLI-facing name." from "Parity with the Rust ShellExecuteTool::name." with a blank ///.
+    - description: condensed to a single-line period-terminated summary (no elaboration needed).
+    - make(preferredDirectory:): condensed summary to one line "Builds the fused shell tool over a freshly assembled default ShellContext." then blank /// and the existing elaboration/Parameter/Returns/Throws.
+    - make(context:): already compliant (one-line summary + blank /// + body); left as-is.
+
+    Verified: swift build clean (exit 0, 0 warnings incl. shell-demo), swift test green (10 suites / 109 tests, 0 failures, 0 warnings), no leaked /bin/sh subprocesses. Left in doing for /review.
+  timestamp: 2026-07-15T23:24:33.595605+00:00
 depends_on:
 - 01KWYJAWZQ8PN9031D9FCWG2N8
 position_column: doing
@@ -93,3 +111,10 @@ Rely on stock ArgumentParser (re-exported by `Operations`) for help text, did-yo
 - [x] `Examples/ShellDemo/Sources/shell-demo/main.swift:38` — The string literal "shell-demo" is repeated (also on line 48). Extract to a named constant to ensure the executable name is defined in one place. Define let executableName = "shell-demo" at the start of main() and use it at both line 38 and line 48.
 - [x] `Sources/ShellTool/ShellTool.swift:48` — The public function `make(context:)` lacks a documentation comment. Public functions should document their purpose, parameters, return value, and any errors they throw. Add a documentation comment above the `make(context:)` function explaining its purpose, the role of the `context` parameter, and what it returns. Consider: "Builds the fused `shell` tool over the provided context. This is the direct factory the model path uses; the CLI path goes through `make(preferredDirectory:)` instead." (or similar, in line with the design).
 - [x] `Sources/ShellTool/ShellTool.swift:96` — Public function `make(context:)` lacks a `///` documentation comment. The rule requires every `public`/`open` declaration to carry documentation. Add a `///` documentation block before line 96 describing this factory method's purpose, parameters, return type, and throws clause. At minimum: `/// Builds the fused \`shell\` tool over the supplied context.` followed by parameter and throws documentation.
+
+## Review Findings (2026-07-15 18:15)
+
+- [x] `Sources/ShellTool/ShellTool.swift:23` — The first line of the doc comment does not end with a period. According to the rule, 'The first line is a single-sentence summary ending in a period.' The summary spans multiple lines (23-26) without the first line completing and ending with a period. Either keep the entire summary on the first line with a period, or break it into multiple single-sentence lines, each ending with a period. For example: `/// The fused `shell` `OperationTool`'s public factory and shared naming.`.
+- [x] `Sources/ShellTool/ShellTool.swift:28` — The doc comment has a summary sentence followed by elaboration on the same line/paragraph without a blank line separating them. The rule requires: 'any elaboration follows after a blank `///` line.' The second sentence 'Parity with the Rust...' should be separated from the first by a blank line. Add a blank `///` line between the summary and the elaboration: `/// The fused tool's model- and CLI-facing name.` / `///` / `/// Parity with the Rust `ShellExecuteTool::name`.`.
+- [x] `Sources/ShellTool/ShellTool.swift:32` — The first line of the doc comment does not end with a period. The summary spans multiple lines (32-33) without the first line completing and ending with a period. Either keep the entire summary on the first line with a period, or break it into multiple single-sentence lines. For example: `/// A human- and model-facing summary of the fused tool, byte-identical to the Rust `ShellExecuteTool::description`.`.
+- [x] `Sources/ShellTool/ShellTool.swift:37` — The first line of the doc comment does not end with a period. The summary spans multiple lines (37-41) without the first line completing and ending with a period. Either keep the entire summary on the first line with a period, or break it into multiple single-sentence lines. You could simplify to: `/// Builds the fused `shell` tool over a default `ShellContext`.`.

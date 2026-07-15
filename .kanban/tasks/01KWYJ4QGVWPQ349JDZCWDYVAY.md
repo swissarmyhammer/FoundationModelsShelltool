@@ -38,6 +38,23 @@ comments:
   id: 01kxkzy9jz95v420p2717amq7v
   text: 'really-done verified: swift build clean (exit 0, 0 warnings incl. shell-demo), swift test green (10 suites / 109 tests, 0 failures, 0 warnings). Adversarial double-check returned PASS. Applied its one cheap hardening: listProcessesConverges now asserts the seeded row actually surfaces (count == 1, command == "echo seed") so the cross-path equality can''t pass vacuously. Its second observation (tool-error->non-zero only reachable via ArgumentParser parse errors, since every shell op returns .corrective rather than throwing) is by-design and accepted. Left in doing for /review.'
   timestamp: 2026-07-15T22:56:42.591483+00:00
+- actor: claude-code
+  id: 01kxm0g4p1j8219b47khpdgwxw
+  text: 'Iteration 1 review (complete pass, 14/14): 3 findings (17:59) — (1) duplicated "shell-demo" literal in main.swift:38 & :48 → extract executableName constant; (2)&(3) public make() factories in ShellTool.swift (:48, :96) lack `///` doc comments. Task stayed in `review`. Starting implement iteration: extract the constant and doc-comment ALL public declarations in ShellTool.swift so a re-review finds zero missing-doc recurrences.'
+  timestamp: 2026-07-15T23:06:27.393503+00:00
+- actor: claude-code
+  id: 01kxm0qms3cgfw2bt0hsrttsfy
+  text: |-
+    Review findings (17:59) worked and all 3 checkboxes flipped to [x].
+
+    Discovery: the committed HEAD state of ShellTool.swift had a BOTCHED partial fix from the prior iteration — the two make() doc blocks were glued into ONE contiguous /// block above make(preferredDirectory:), leaving make(context:) (the actual finding target) still undocumented. Fixed at the root by splitting them so each factory carries its own correct doc block.
+
+    Changes:
+    - Examples/ShellDemo/Sources/shell-demo/main.swift: extracted `let executableName = "shell-demo"` at the top of main(); used at the OperationCLIDriver(executableName:) init and in the stderr `\(executableName): \(error)` write. No other duplicated literal of this kind remains.
+    - Sources/ShellTool/ShellTool.swift: every public declaration now carries a proper /// doc comment matching ShellPolicy/ShellRunner style — the ShellTool enum, name, description, make(preferredDirectory:) (Parameter/Returns/Throws for ShellStateError.logCreationFailed), and make(context:) (Parameter/Returns/Throws for SchemaFusionError). make(context:) had NO doc before; make(preferredDirectory:) doc was already present (kept, un-glued).
+
+    Verified: swift build clean (exit 0, 0 warnings incl. shell-demo), swift test green (10 suites / 109 tests, 0 failures, 0 warnings), no leaked subprocesses (ps shows none). Left in doing for /review.
+  timestamp: 2026-07-15T23:10:33.251308+00:00
 depends_on:
 - 01KWYJAWZQ8PN9031D9FCWG2N8
 position_column: doing
@@ -70,3 +87,9 @@ Rely on stock ArgumentParser (re-exported by `Operations`) for help text, did-yo
 
 ## Workflow
 - Use `/tdd` — write the convergence test first for one op (`execute command`), get it green, then extend to the remaining four.
+
+## Review Findings (2026-07-15 17:59)
+
+- [x] `Examples/ShellDemo/Sources/shell-demo/main.swift:38` — The string literal "shell-demo" is repeated (also on line 48). Extract to a named constant to ensure the executable name is defined in one place. Define let executableName = "shell-demo" at the start of main() and use it at both line 38 and line 48.
+- [x] `Sources/ShellTool/ShellTool.swift:48` — The public function `make(context:)` lacks a documentation comment. Public functions should document their purpose, parameters, return value, and any errors they throw. Add a documentation comment above the `make(context:)` function explaining its purpose, the role of the `context` parameter, and what it returns. Consider: "Builds the fused `shell` tool over the provided context. This is the direct factory the model path uses; the CLI path goes through `make(preferredDirectory:)` instead." (or similar, in line with the design).
+- [x] `Sources/ShellTool/ShellTool.swift:96` — Public function `make(context:)` lacks a `///` documentation comment. The rule requires every `public`/`open` declaration to carry documentation. Add a `///` documentation block before line 96 describing this factory method's purpose, parameters, return type, and throws clause. At minimum: `/// Builds the fused \`shell\` tool over the supplied context.` followed by parameter and throws documentation.

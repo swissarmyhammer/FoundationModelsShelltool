@@ -34,32 +34,6 @@ public enum ShellTool {
     public static let description =
         "Virtual shell with history and process management. Execute commands, grep output history, and manage running processes."
 
-    /// Builds the fused `shell` tool over `context`.
-    ///
-    /// Fuses the five operations — `execute command`, `list processes`, `kill
-    /// process`, `grep history`, `get lines` — into one
-    /// `OperationTool<ShellContext>`, sharing `context` so every op reads and
-    /// records into the same `ShellState`. The resolver is given an `inferOp`
-    /// hook returning `"execute command"`, so a payload that omits `op`
-    /// entirely resolves to the execute-command operation — the upstream
-    /// expression of the Rust dispatch's `"execute command" | "" =>` empty-op
-    /// default.
-    ///
-    /// Exposed as a factory rather than a stored singleton because
-    /// `OperationTool.init` throws, and because each `ShellContext` carries a
-    /// distinct `ShellState` (its own `.shell/log` store) the caller owns and
-    /// supplies.
-    ///
-    /// - Parameter context: The shared environment every operation's
-    ///   `execute(in:)` runs against — the `ShellState`, `ShellRunner`, and
-    ///   `ShellPolicy` the caller assembled.
-    /// - Returns: The fused tool, ready to drive both an `OperationCLIDriver`
-    ///   and a `LanguageModelSession`.
-    /// - Throws: `SchemaFusionError.reservedParameterName` if the fused schema
-    ///   collides with the `op` discriminator (not expected for this fixed
-    ///   operation set, but propagated per `OperationTool.init`'s contract);
-    ///   rethrows `GenerationSchema.SchemaError` on any other schema-fusion
-    ///   failure.
     /// Builds the fused `shell` tool over a freshly assembled default
     /// `ShellContext` — the contextless entry point the `shell-demo`
     /// executable (and any other embedder without `@testable` access) uses,
@@ -87,6 +61,32 @@ public enum ShellTool {
         return try make(context: ShellContext(state: state))
     }
 
+    /// Builds the fused `shell` tool over `context`.
+    ///
+    /// Fuses the five operations — `execute command`, `list processes`, `kill
+    /// process`, `grep history`, `get lines` — into one
+    /// `OperationTool<ShellContext>`, sharing `context` so every op reads and
+    /// records into the same `ShellState`. The resolver is given an `inferOp`
+    /// hook returning `"execute command"`, so a payload that omits `op`
+    /// entirely resolves to the execute-command operation — the upstream
+    /// expression of the Rust dispatch's `"execute command" | "" =>` empty-op
+    /// default.
+    ///
+    /// Exposed as a factory rather than a stored singleton because
+    /// `OperationTool.init` throws, and because each `ShellContext` carries a
+    /// distinct `ShellState` (its own `.shell/log` store) the caller owns and
+    /// supplies.
+    ///
+    /// - Parameter context: The shared environment every operation's
+    ///   `execute(in:)` runs against — the `ShellState`, `ShellRunner`, and
+    ///   `ShellPolicy` the caller assembled.
+    /// - Returns: The fused tool, ready to drive both an `OperationCLIDriver`
+    ///   and a `LanguageModelSession`.
+    /// - Throws: `SchemaFusionError.reservedParameterName` if the fused schema
+    ///   collides with the `op` discriminator (not expected for this fixed
+    ///   operation set, but propagated per `OperationTool.init`'s contract);
+    ///   rethrows `GenerationSchema.SchemaError` on any other schema-fusion
+    ///   failure.
     public static func make(context: ShellContext) throws -> OperationTool<ShellContext> {
         try OperationTool(
             name: name,

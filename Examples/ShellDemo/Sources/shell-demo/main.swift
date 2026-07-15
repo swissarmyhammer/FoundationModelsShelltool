@@ -31,11 +31,12 @@ import ShellTool
 @main
 enum ShellDemoMain {
     static func main() async {
+        let executableName = "shell-demo"
         let arguments = Array(CommandLine.arguments.dropFirst())
         do {
             let driver = try OperationCLIDriver(
                 tool: try ShellTool.make(),
-                executableName: "shell-demo"
+                executableName: executableName
             )
             let result = await driver.run(arguments: arguments)
             if !result.output.isEmpty {
@@ -45,7 +46,7 @@ enum ShellDemoMain {
                 exit(result.exitCode)
             }
         } catch {
-            FileHandle.standardError.write(Data("shell-demo: \(error)\n".utf8))
+            FileHandle.standardError.write(Data("\(executableName): \(error)\n".utf8))
             exit(1)
         }
     }

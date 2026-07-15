@@ -315,6 +315,7 @@ import Testing
         let commands = await state.listCommands()
         #expect(commands[0].status == .timedOut)
         #expect(commands[0].exitCode == -1)
+        #expect(commands[0].completedAt != nil)
     }
 
     @Test func killProcessWithoutRunningProcessThrows() async throws {

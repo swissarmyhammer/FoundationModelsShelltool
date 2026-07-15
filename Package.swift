@@ -68,7 +68,13 @@ let package = Package(
         // package-internal runtime types directly.
         .testTarget(
             name: "ShellToolTests",
-            dependencies: ["ShellTool"]
+            dependencies: [
+                "ShellTool",
+                // Used by the builtin-config schema test to strictly decode
+                // `ShellPolicy.builtinYAML` and detect any key the lenient
+                // production decoder would silently ignore.
+                .product(name: "Yams", package: "Yams"),
+            ]
         ),
     ]
 )

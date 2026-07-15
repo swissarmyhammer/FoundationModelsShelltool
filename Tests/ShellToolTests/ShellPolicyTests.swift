@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Yams
 
 @testable import ShellTool
 
@@ -316,5 +317,65 @@ import Testing
         let policy = ShellPolicy(userConfigURL: missingURL(), projectConfigURL: missingURL())
         let missing = "/no/such/directory/\(UUID().uuidString)"
         #expect(policy.check(workingDirectory: missing)?.contains("does not exist") == true)
+    }
+
+    // MARK: - Builtin config schema
+
+    /// The embedded `builtinYAML` must declare no key the production decoder
+    /// would silently ignore. The real `ShellSecurityConfig`/`ShellSettings`
+    /// decoders use `decodeIfPresent`, so a stale key (e.g. one whose property
+    /// was removed) parses without error yet does nothing — the builtin default
+    /// would then advertise a setting the code no longer honors. This strict
+    /// probe fails on any such dangling key.
+    @Test func builtinConfigDeclaresNoKeysTheDecoderIgnores() throws {
+        let probe = try YAMLDecoder().decode(
+            BuiltinKeyProbe.self, from: ShellPolicy.builtinYAML)
+        #expect(
+            probe.unknownTopLevelKeys.isEmpty,
+            "builtin YAML has top-level keys the decoder ignores: \(probe.unknownTopLevelKeys.sorted())")
+        #expect(
+            probe.unknownSettingsKeys.isEmpty,
+            "builtin YAML settings block has keys the decoder ignores: \(probe.unknownSettingsKeys.sorted())")
+    }
+
+    /// Test-only strict decoder over `builtinYAML`: captures every declared key
+    /// and reports the ones outside the schema the production decoders read.
+    private struct BuiltinKeyProbe: Decodable {
+        /// Top-level keys not among `permit`/`deny`/`settings`.
+        let unknownTopLevelKeys: Set<String>
+        /// `settings:` keys not among the `ShellSettings` coding keys.
+        let unknownSettingsKeys: Set<String>
+
+        /// Recognized top-level keys — the `ShellSecurityConfig` coding keys.
+        private static let recognizedTopLevel: Set<String> = ["permit", "deny", "settings"]
+        /// Recognized `settings:` keys — the `ShellSettings` coding keys.
+        private static let recognizedSettings: Set<String> = [
+            "max_command_length", "max_env_value_length", "enable_validation",
+        ]
+
+        /// A `CodingKey` accepting any string, so `allKeys` yields every key
+        /// actually present in the decoded mapping.
+        private struct AnyKey: CodingKey {
+            let stringValue: String
+            init(_ stringValue: String) { self.stringValue = stringValue }
+            init?(stringValue: String) { self.stringValue = stringValue }
+            var intValue: Int? { nil }
+            init?(intValue: Int) { nil }
+            static let settings = AnyKey("settings")
+        }
+
+        init(from decoder: Decoder) throws {
+            let root = try decoder.container(keyedBy: AnyKey.self)
+            unknownTopLevelKeys =
+                Set(root.allKeys.map(\.stringValue)).subtracting(Self.recognizedTopLevel)
+
+            if root.allKeys.contains(where: { $0.stringValue == AnyKey.settings.stringValue }) {
+                let settings = try root.nestedContainer(keyedBy: AnyKey.self, forKey: .settings)
+                unknownSettingsKeys =
+                    Set(settings.allKeys.map(\.stringValue)).subtracting(Self.recognizedSettings)
+            } else {
+                unknownSettingsKeys = []
+            }
+        }
     }
 }

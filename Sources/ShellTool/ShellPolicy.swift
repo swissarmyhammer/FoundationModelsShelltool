@@ -383,6 +383,5 @@ public struct ShellPolicy: Sendable {
         settings:
           max_command_length: \#(ShellSettings.defaultMaxCommandLength)
           max_env_value_length: \#(ShellSettings.defaultMaxEnvValueLength)
-          enable_audit_logging: true
         """#
 }

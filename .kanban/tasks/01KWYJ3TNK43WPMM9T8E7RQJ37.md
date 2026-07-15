@@ -67,6 +67,25 @@ comments:
   id: 01kxka2nnmv1b38wrbcmghztwn
   text: 'Iteration 2: all 5 findings fixed at root (removed dead enableAuditLogging; extracted defaultMaxCommandLength/defaultMaxEnvValueLength constants interpolated into builtinYAML; made ShellPolicy + its init/check API public to match the exposed ShellTool library; extracted shellConfigFileName constant). /test re-confirmed green (36 tests, 0 warnings, 0 skipped). Committing checkpoint, then re-reviewing HEAD~1..HEAD.'
   timestamp: 2026-07-15T16:34:37.364971+00:00
+- actor: claude-code
+  id: 01kxkaddr1f3fgzxffy6eqvmbr
+  text: 'Iteration 2 review verdict: all 5 prior findings verified resolved (no recurrences), but 1 NEW finding — builtinYAML still carries `enable_audit_logging: true` after the property was removed (dangling key silently ignored by decoder). Task stayed in `review`. Starting iteration 3: /implement to remove the dead YAML line so the embedded default matches the schema.'
+  timestamp: 2026-07-15T16:40:29.697406+00:00
+- actor: claude-code
+  id: 01kxkaq2m5t9e1ppqn6zxs62tk
+  text: |-
+    Iteration 3 (review finding, 11:35): removed the dangling `enable_audit_logging: true` line from the `settings:` block of `builtinYAML` in ShellPolicy.swift. Obeyed the reviewer's ruling that the prior "byte-fidelity with upstream" justification is stale — the line is now gone, not re-argued.
+
+    Scanned the whole builtinYAML block for the dangling-key class: the only key that no longer maps to a decoded property was `enable_audit_logging`. Every other key maps — top-level `deny`/`permit`/`settings` → ShellSecurityConfig.CodingKeys; per-rule `pattern`/`reason` → PatternRule; `max_command_length`/`max_env_value_length` → ShellSettings.CodingKeys. No other recurrences.
+
+    TDD: added `builtinConfigDeclaresNoKeysTheDecoderIgnores()` in ShellPolicyTests.swift with a strict `BuiltinKeyProbe` decoder (an any-key CodingKey capturing `allKeys`) that flags any builtin-YAML top-level or settings key outside the recognized schema — a class-level guard, not just a string check for one line. Watched it fail RED (`unknownSettingsKeys → ["enable_audit_logging"]`) before the removal, green after. Required adding Yams to the ShellToolTests test target in Package.swift (the test uses YAMLDecoder directly).
+
+    `swift test`: 37 tests / 3 suites, 0 failures. `swift build --build-tests`: 0 warnings / 0 errors. Kept the repo's 4-space style; did NOT run the repo-wide swift-format reflow. Finding flipped to [x]. Left in `doing`.
+  timestamp: 2026-07-15T16:45:45.989352+00:00
+- actor: claude-code
+  id: 01kxkbagxhdps50yxfxqbd64t7
+  text: 'Iteration 3: removed dangling `enable_audit_logging: true` from builtinYAML; added a class-level regression guard (BuiltinKeyProbe) that fails if builtinYAML declares any key the decoder ignores. /test green (37 tests, 0 warnings, 0 skipped). Committing checkpoint, then re-reviewing HEAD~1..HEAD.'
+  timestamp: 2026-07-15T16:56:23.217637+00:00
 depends_on:
 - 01KWYJ2FNNZ1HD5TP11KVA4DTN
 position_column: doing
@@ -120,3 +139,7 @@ Additional validation, all returned as corrective messages rather than thrown:
 - [x] `Sources/ShellTool/ShellPolicy.swift:67` — The environment variable value length limit 1024 is hardcoded in `ShellSettings.default` and again in `builtinYAML` at line 354; these must stay in sync or the builtin config diverges from code defaults. Define `private static let defaultMaxEnvValueLength = 1024` and reference it in the default; document or enforce that `builtinYAML` must use the same value.
 - [x] `Sources/ShellTool/ShellPolicy.swift:121` — ShellPolicy should explicitly declare `public` access; the rule requires explicit access modifiers on library declarations when the intent is API-shaping. Currently it relies on the implicit `internal` default. Change `struct ShellPolicy: Sendable {` to `public struct ShellPolicy: Sendable {`.
 - [x] `Sources/ShellTool/ShellPolicy.swift:312` — The config filename ".shell/config.yaml" is hardcoded and repeated at line 319; use a named constant to prevent drift if the filename changes. Define `private static let shellConfigFileName = ".shell/config.yaml"` at the top of the class and use it in both functions.
+
+## Review Findings (2026-07-15 11:35)
+
+- [x] `Sources/ShellTool/ShellPolicy.swift:407` — The builtin YAML contains `enable_audit_logging: true`, but the `enableAuditLogging` property was removed from `ShellSettings` and is no longer present in the Decodable CodingKeys enum. The setting is now silently ignored by the decoder, creating an inconsistency where the default config advertises a setting the code no longer supports. Remove the `enable_audit_logging: true` line from the builtin YAML so the embedded default config matches the code's actual configuration schema.

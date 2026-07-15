@@ -73,6 +73,26 @@ comments:
 
     Verified: swift build clean (exit 0, 0 warnings incl. shell-demo), swift test green (10 suites / 109 tests, 0 failures, 0 warnings), no leaked /bin/sh subprocesses. Left in doing for /review.
   timestamp: 2026-07-15T23:24:33.595605+00:00
+- actor: claude-code
+  id: 01kxm216xy6cxewmxjrnvbzydq
+  text: 'Iteration 3 review (complete pass, 14/14): prior 4 doc-format findings resolved (lines 23/28/32/37), but 1 NEW finding (18:29) — `description` property (ShellTool.swift:35) still lacks the blank `///` separator between its summary and the "byte-identical to Rust" detail line. Different line than before (the implementer missed this one declaration), same rule. Not a guardrail recurrence. Dispatching a focused iteration to fix line 35 AND audit EVERY doc comment in the file line-by-line so this converges.'
+  timestamp: 2026-07-15T23:33:15.326681+00:00
+- actor: claude-code
+  id: 01kxm23wmatjaak8tf4hmqpmpf
+  text: |-
+    Review finding (18:29) worked and its checkbox flipped to [x].
+
+    Fixed Sources/ShellTool/ShellTool.swift `description`: split the glued one-liner into summary "A human- and model-facing summary of the fused tool.", a blank ///, then "Byte-identical to the Rust `ShellExecuteTool::description`." — matching the two-part convention used everywhere else in the file.
+
+    To break the three-iteration one-declaration-missed pattern, audited EVERY doc comment in the file line-by-line. All FIVE public declarations now conform (summary sentence ending in '.', then exactly one blank /// before any body):
+    - ShellTool enum: "The fused `shell` `OperationTool`'s public factory and shared naming." / /// / detail. OK.
+    - name: "The fused tool's model- and CLI-facing name." / /// / "Parity with the Rust `ShellExecuteTool::name`." OK.
+    - description: "A human- and model-facing summary of the fused tool." / /// / "Byte-identical to the Rust `ShellExecuteTool::description`." FIXED.
+    - make(preferredDirectory:): "Builds the fused `shell` tool over a freshly assembled default `ShellContext`." / /// / body+Parameter/Returns/Throws. OK.
+    - make(context:): "Builds the fused `shell` tool over `context`." / /// / body+Parameter/Returns/Throws. OK.
+
+    Verified: swift build clean (exit 0, 0 warnings incl. shell-demo), swift test green (10 suites / 109 tests, 0 failures, 0 warnings). Left in doing for /review.
+  timestamp: 2026-07-15T23:34:43.082358+00:00
 depends_on:
 - 01KWYJAWZQ8PN9031D9FCWG2N8
 position_column: doing
@@ -118,3 +138,7 @@ Rely on stock ArgumentParser (re-exported by `Operations`) for help text, did-yo
 - [x] `Sources/ShellTool/ShellTool.swift:28` — The doc comment has a summary sentence followed by elaboration on the same line/paragraph without a blank line separating them. The rule requires: 'any elaboration follows after a blank `///` line.' The second sentence 'Parity with the Rust...' should be separated from the first by a blank line. Add a blank `///` line between the summary and the elaboration: `/// The fused tool's model- and CLI-facing name.` / `///` / `/// Parity with the Rust `ShellExecuteTool::name`.`.
 - [x] `Sources/ShellTool/ShellTool.swift:32` — The first line of the doc comment does not end with a period. The summary spans multiple lines (32-33) without the first line completing and ending with a period. Either keep the entire summary on the first line with a period, or break it into multiple single-sentence lines. For example: `/// A human- and model-facing summary of the fused tool, byte-identical to the Rust `ShellExecuteTool::description`.`.
 - [x] `Sources/ShellTool/ShellTool.swift:37` — The first line of the doc comment does not end with a period. The summary spans multiple lines (37-41) without the first line completing and ending with a period. Either keep the entire summary on the first line with a period, or break it into multiple single-sentence lines. You could simplify to: `/// Builds the fused `shell` tool over a default `ShellContext`.`.
+
+## Review Findings (2026-07-15 18:29)
+
+- [x] `Sources/ShellTool/ShellTool.swift:35` — The `description` property's doc comment lacks a blank /// separator, breaking the format pattern applied consistently to all other public declarations — summary line, blank ///, then detail lines. Reformat the description doc comment to split the one-liner into multiple lines: 'A human- and model-facing summary of the fused tool.' (line 1), blank /// (line 2), 'Byte-identical to the Rust `ShellExecuteTool::description`.' (line 3).

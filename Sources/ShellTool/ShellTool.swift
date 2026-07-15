@@ -31,7 +31,9 @@ public enum ShellTool {
     /// Parity with the Rust `ShellExecuteTool::name`.
     public static let name = "shell"
 
-    /// A human- and model-facing summary of the fused tool, byte-identical to the Rust `ShellExecuteTool::description`.
+    /// A human- and model-facing summary of the fused tool.
+    ///
+    /// Byte-identical to the Rust `ShellExecuteTool::description`.
     public static let description =
         "Virtual shell with history and process management. Execute commands, grep output history, and manage running processes."
 

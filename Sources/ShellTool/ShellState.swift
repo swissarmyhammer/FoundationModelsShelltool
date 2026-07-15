@@ -217,14 +217,15 @@ actor ShellState {
             throw ShellStateError.noRunningProcess(commandID)
         }
         killpg(pid, SIGKILL)
-        processes[commandID] = nil
 
+        // Route the state mutation through `completeCommand`, the single source
+        // of truth for command completion (clears the process entry, sets
+        // status/exitCode/completed timestamps) — a killed command has no exit
+        // code. Re-fetch the index afterwards to return the updated record.
+        completeCommand(commandID: commandID, status: .killed, exitCode: nil)
         guard let index = commands.firstIndex(where: { $0.id == commandID }) else {
             throw ShellStateError.unknownCommand(commandID)
         }
-        commands[index].status = .killed
-        commands[index].completedAt = ContinuousClock().now
-        commands[index].completedAtWall = Date()
         return commands[index]
     }
 

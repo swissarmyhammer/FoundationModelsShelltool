@@ -145,8 +145,8 @@ comments:
   timestamp: 2026-07-15T19:25:00.803195+00:00
 depends_on:
 - 01KWYJ2FNNZ1HD5TP11KVA4DTN
-position_column: doing
-position_ordinal: '8180'
+position_column: done
+position_ordinal: '8280'
 title: ShellRunner (spawn / stream / limits / timeout / kill)
 ---
 ## What

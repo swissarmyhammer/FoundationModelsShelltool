@@ -60,6 +60,35 @@ comments:
   id: 01kxk3femytm06s73j68z4d7ft
   text: 'Resolved review finding 2026-07-15 09:32. Added `#expect(commands[0].completedAt != nil)` to `completeCommandCanMarkTimedOut`. Audited the whole file at the root: the three tests that reach a terminal state and inspect the persisted `listCommands()` record — completeCommandSetsStatusAndExitCode (.completed), registerThenKillProcessKillsChildMarksKilledAndDropsIt (.killed), completeCommandCanMarkTimedOut (.timedOut) — now all assert the completedAt invariant. killProcessWithoutRunningProcessThrows deliberately untouched (never reaches completion, inspects no record). swift build green; swift test green (20 tests, 2 suites, 0 failures). Task left green in doing for review.'
   timestamp: 2026-07-15T14:39:16.126867+00:00
+- actor: claude-code
+  id: 01kxknyeqfdeef3kzpvn1enz90
+  text: Picked up by /finish single-task mode. This task was implemented green by an earlier session (13:29–14:39) and left in `doing` awaiting a re-review, but that session ended — it's an orphan in `doing`, not live work. Its code (ShellState.swift + ShellStateTests.swift) is already committed (dde493a→a4d7b11) and green; later Id→ID/integration edits to the file landed and were reviewed under the ShellRunner task ^fztq0g3. Driving it through the review gate to done so it unblocks ExecuteCommand ^66h3h2k and the rest of the board. Confirming green via /test, then re-review.
+  timestamp: 2026-07-15T20:02:02.095188+00:00
+- actor: claude-code
+  id: 01kxkpe09tb74hp0ptb81qjnmz
+  text: 'Review gate (complete pass, 14/14): 3 prior findings hold resolved; 1 NEW finding (15:04) — command-completion state-update logic duplicated between completeCommand (189–194) and killProcess (203–210): clear process entry, find command index, set status/completedAt/completedAtWall. Fix: killProcess delegates to completeCommand as single source of truth. Task stayed in `review`. Starting implement iteration to consolidate at root; this is a real code delta so it''ll checkpoint+re-review cleanly on HEAD~1..HEAD.'
+  timestamp: 2026-07-15T20:10:31.610225+00:00
+- actor: claude-code
+  id: 01kxkpkfwjf60h5a7vt57zweek
+  text: |-
+    Pulled back review→doing to resolve finding 2026-07-15 15:04 (duplicated command-completion state mutation).
+
+    Root-cause consolidation in Sources/ShellTool/ShellState.swift: `killProcess` no longer duplicates the clear-entry/find-index/set-status logic. It now keeps only its unique work (the `noRunningProcess` guard + `killpg(pid, SIGKILL)`), then delegates the state mutation to `completeCommand(commandID:, status:.killed, exitCode:nil)` — the single source of truth — and re-fetches the index (throwing `unknownCommand` if missing) to return the updated record.
+
+    Convergence audit of all completion paths:
+    - `completeCommand` — the one routine (clears process entry, finds index, sets status/exitCode/completedAt/completedAtWall).
+    - `completeIfRunning` — was ALREADY delegating (running-state guard + call to completeCommand); no duplicated mutation, left as-is.
+    - `killProcess` — now delegates too.
+    Zero duplicated clear-entry/find-index/set-status logic remains; a future completion-semantics change can't drift across paths.
+
+    Behavior preserved exactly: `.killed`, exitCode nil (killed carries no exit code; a running command already had nil, so setting nil is observably identical to the old leave-as-is), both completedAt + completedAtWall set, process entry dropped, same return value (updated CommandRecord).
+
+    Baseline before change: swift test 63/5 green. After change: swift build exit 0, swift test 63 tests / 5 suites / 0 failures, 0 build warnings, no leaked /bin/sleep subprocesses. Adversarial double-check gate running.
+  timestamp: 2026-07-15T20:13:31.410675+00:00
+- actor: claude-code
+  id: 01kxkpp5mh4apwvv50s1wnc27e
+  text: 'Adversarial double-check gate: PASS. Independently re-ran swift test (63 tests / 5 suites, exit 0) and verified all five checks: returned vs stored record identical (.killed, exitCode nil, both completedAt+completedAtWall set, process entry dropped); exitCode nil-write is observably identical to the old leave-as-is for any running command (the only reachable state at the mutation); completeIfRunning already delegated and still guards against clobbering .killed; ordering preserved (killpg before mutation, no new actor suspension since completeCommand is synchronous); unknownCommand throw still reachable/correct (clear-then-throw, matching the original). Sole downstream caller ShellRunner uses completeIfRunning (behavior unchanged). Finding 2026-07-15 15:04 checkbox flipped to [x]. Task left GREEN in `doing` for /review.'
+  timestamp: 2026-07-15T20:14:59.217686+00:00
 depends_on:
 - 01KWYJ2FNNZ1HD5TP11KVA4DTN
 position_column: doing
@@ -111,3 +140,8 @@ Implement `ShellState` (an `actor`) and its log store in `Sources/ShellTool/Shel
 
 - [x] `Tests/ShellToolTests/ShellStateTests.swift:269` — The change strengthens registerThenKillProcessKillsChildMarksKilledAndDropsIt to assert that completedAt is set in the persisted record, mirroring the same assertion in completeCommandSetsStatusAndExitCode. However, completeCommandCanMarkTimedOut—which also calls completeCommand to mark a command as complete—lacks this assertion. If the invariant is that completedAt must be set when a command transitions to any completion state, this should apply consistently to all paths that complete a command: normal completion, timeout, and kill. Add `#expect(commands[0].completedAt != nil)` to completeCommandCanMarkTimedOut immediately after line 276 to ensure the completedAt invariant is verified for all command completion states (not just .completed and .killed, but also .timedOut).
   - Resolved: added `#expect(commands[0].completedAt != nil)` to `completeCommandCanMarkTimedOut` after the `exitCode == -1` check. Audited every test in the file that drives a command to a terminal state via `completeCommand`/`killProcess` and inspects the persisted record from `listCommands()`: `completeCommandSetsStatusAndExitCode` (already asserts, `.completed`), `registerThenKillProcessKillsChildMarksKilledAndDropsIt` (already asserts, `.killed`), and `completeCommandCanMarkTimedOut` (`.timedOut`, was the only gap — now fixed). `killProcessWithoutRunningProcessThrows` does not reach a completion state (kill throws, command stays `.running`) and inspects no record, so it is correctly left untouched. The "completedAt is set on any completion state" invariant is now exercised consistently across normal completion, timeout, and kill, with zero remaining recurrences. swift build + swift test green (20 tests, 2 suites, 0 failures).
+
+## Review Findings (2026-07-15 15:04)
+
+- [x] `Sources/ShellTool/ShellState.swift:203` — The command-completion state-update logic is duplicated across completeCommand (lines 189–194) and killProcess (lines 203–210). Both clear the process entry, find the command index, and set status/completedAt/completedAtWall. This duplication will drift when the completion semantics need to evolve — a fix applied to one path and not the other is a latent bug. Replace lines 203–210 in killProcess with a call to completeCommand: `completeCommand(commandID: commandID, status: .killed, exitCode: nil)`. Then add a guard to re-fetch the index before returning: `guard let index = commands.firstIndex(where: { $0.id == commandID }) else { throw ShellStateError.unknownCommand(commandID) }; return commands[index]`. This reuses the single source of truth for completion state updates.
+  - Resolved: `killProcess` now delegates its state mutation to `completeCommand(commandID:status:.killed,exitCode:nil)` — the single source of truth that clears the process entry, finds the index, and sets status/exitCode/completedAt/completedAtWall — then re-fetches the index (throwing `unknownCommand` if missing) and returns the updated record. `killProcess` keeps only its unique responsibilities (the `noRunningProcess` guard and `killpg(pid, SIGKILL)`). Audited all three completion paths at the root: `completeCommand` is the routine; `completeIfRunning` already delegated to it (running-state guard + call, no duplicated mutation); `killProcess` now delegates too. Zero duplicated clear-entry/find-index/set-status logic remains. Behavior preserved exactly: `.killed` status, exitCode nil (killed carries no exit code; running commands already had nil, so setting nil is observably identical to the old leave-as-is), both `completedAt` and `completedAtWall` timestamps set, process entry removed, same return value (updated `CommandRecord`). swift build exit 0; swift test 63 tests / 5 suites / 0 failures / 0 warnings.

@@ -128,7 +128,7 @@ actor ShellState {
         let session = UUID().uuidString
         let directory = try Self.resolveDirectory(preferred: preferredDirectory, sessionID: session)
         self.sessionID = session
-        self.logURL = directory.appendingPathComponent("log")
+        self.logURL = directory.appendingPathComponent(Self.logFilename)
     }
 
     /// Create a `ShellState` rooted at `<cwd>/.shell`, with the temp fallback.
@@ -161,13 +161,21 @@ actor ShellState {
         processes[commandID] = pid
     }
 
+    /// The index of the command with `commandID`, throwing `unknownCommand`
+    /// when no command with that id was ever started. The single lookup used by
+    /// the methods that must reject an unknown id (`appendLines`, `killProcess`).
+    private func getCommandIndex(commandID: Int) throws -> Int {
+        guard let index = commands.firstIndex(where: { $0.id == commandID }) else {
+            throw ShellStateError.unknownCommand(commandID)
+        }
+        return index
+    }
+
     /// Append captured output for a command to the log — every `stdout` line
     /// then every `stderr` line, sharing one continuing 1-based per-command
     /// line counter, each stored as `{sessionID}:{cmdID}:{lineNumber}:{text}\n`.
     func appendLines(commandID: Int, stdout: [String] = [], stderr: [String] = []) throws {
-        guard let index = commands.firstIndex(where: { $0.id == commandID }) else {
-            throw ShellStateError.unknownCommand(commandID)
-        }
+        let index = try getCommandIndex(commandID: commandID)
 
         var buffer = Data()
         for line in stdout + stderr {
@@ -223,9 +231,7 @@ actor ShellState {
         // status/exitCode/completed timestamps) — a killed command has no exit
         // code. Re-fetch the index afterwards to return the updated record.
         completeCommand(commandID: commandID, status: .killed, exitCode: nil)
-        guard let index = commands.firstIndex(where: { $0.id == commandID }) else {
-            throw ShellStateError.unknownCommand(commandID)
-        }
+        let index = try getCommandIndex(commandID: commandID)
         return commands[index]
     }
 
@@ -318,6 +324,9 @@ actor ShellState {
 
     // MARK: - Storage directory resolution
 
+    /// The name of the append-only log file inside the `.shell` directory.
+    private static let logFilename = "log"
+
     /// The `.shell/.gitignore` body: ignore everything in the directory except
     /// the `.gitignore` itself, so a project's `.shell` store stays untracked.
     private static let gitignoreContent = """
@@ -358,7 +367,7 @@ actor ShellState {
             try gitignoreContent.write(to: gitignore, atomically: true, encoding: .utf8)
         }
 
-        let log = dir.appendingPathComponent("log")
+        let log = dir.appendingPathComponent(Self.logFilename)
         if !fileManager.fileExists(atPath: log.path) {
             guard fileManager.createFile(atPath: log.path, contents: nil) else {
                 throw ShellStateError.logCreationFailed(log)

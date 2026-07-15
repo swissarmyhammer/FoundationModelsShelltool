@@ -365,4 +365,47 @@ import Testing
         #expect(reaped == pid)
         #expect((status & 0x7f) == SIGKILL)
     }
+
+    // MARK: - Atomic completion transition
+
+    /// `completeIfRunning` finalizes a still-running command in one actor hop.
+    @Test func completeIfRunningTransitionsARunningCommand() async throws {
+        let tmp = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let state = try makeState(in: tmp)
+
+        let id = await state.startCommand("echo hi")
+        await state.completeIfRunning(commandId: id, status: .completed, exitCode: 0)
+
+        let commands = await state.listCommands()
+        #expect(commands[0].status == .completed)
+        #expect(commands[0].exitCode == 0)
+        #expect(commands[0].completedAt != nil)
+    }
+
+    /// `completeIfRunning` must NOT clobber a command already finalized by another
+    /// path (e.g. an external `killProcess` marking it `.killed`) — the guarantee
+    /// the runner relies on, made atomic so a concurrent kill can't slip through a
+    /// check-then-act gap.
+    @Test func completeIfRunningLeavesAnAlreadyKilledCommandUntouched() async throws {
+        let tmp = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let state = try makeState(in: tmp)
+
+        let id = await state.startCommand("sleep 60")
+        let pid = try spawnKillableChild()
+        await state.registerProcess(commandId: id, pid: pid)
+        _ = try await state.killProcess(commandId: id)  // marks .killed
+
+        // The runner's post-run completion must be a no-op now.
+        await state.completeIfRunning(commandId: id, status: .completed, exitCode: 0)
+
+        let commands = await state.listCommands()
+        #expect(commands[0].status == .killed)
+        #expect(commands[0].exitCode == nil)
+
+        // Clean up the killed child (already SIGKILLed by killProcess).
+        var reapStatus: Int32 = 0
+        _ = waitpid(pid, &reapStatus, 0)
+    }
 }

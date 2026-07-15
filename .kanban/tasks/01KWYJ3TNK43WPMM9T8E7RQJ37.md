@@ -105,7 +105,7 @@ comments:
   timestamp: 2026-07-15T17:29:26.569391+00:00
 depends_on:
 - 01KWYJ2FNNZ1HD5TP11KVA4DTN
-position_column: doing
+position_column: done
 position_ordinal: '8180'
 title: ShellPolicy (stacked config + validation)
 ---

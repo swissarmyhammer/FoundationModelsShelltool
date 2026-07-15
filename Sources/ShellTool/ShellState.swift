@@ -194,6 +194,19 @@ actor ShellState {
         commands[index].completedAtWall = Date()
     }
 
+    /// Finalize a command **only if it is still running**, in a single actor
+    /// hop. This is the atomic transition the runner uses to record a normal or
+    /// timed-out completion: because the check and the write happen without an
+    /// intervening suspension, a concurrent `killProcess` that already flipped
+    /// the record to `.killed` is never clobbered back. A no-op for an unknown
+    /// id or an already-finalized command.
+    func completeIfRunning(commandId: Int, status: CommandStatus, exitCode: Int?) {
+        guard let index = commands.firstIndex(where: { $0.id == commandId }),
+            commands[index].status == .running
+        else { return }
+        completeCommand(commandId: commandId, status: status, exitCode: exitCode)
+    }
+
     /// Kill a running command by sending `SIGKILL` to its process group, then
     /// mark it killed and return its record. Throws when no process is
     /// registered for the id, so the caller never sends a signal to a stale or

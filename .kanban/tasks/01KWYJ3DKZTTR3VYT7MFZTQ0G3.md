@@ -58,6 +58,21 @@ comments:
   id: 01kxkg8hf10ny17zeq45a9bvz6
   text: 'Iteration 1: implementation landed green in `doing`. ShellRunner.swift (own process group via PlatformOptions.processGroupID=0, concurrent line capture via OutputCollector actor, optional timeout w/ group-kill → timed_out/-1, reap discipline on every path), OutputBuffer.swift (10MiB cap, line-boundary truncation marker, binary placeholder, lossy UTF-8), and ShellState.completeIfRunning added. swift-subprocess handled process groups natively — no posix_spawn fallback. /test re-confirmed green: 63 tests / 5 suites, 0 warnings, 0 skipped, no leaked processes. Committing checkpoint, then /review HEAD~1..HEAD.'
   timestamp: 2026-07-15T18:22:41.121277+00:00
+- actor: claude-code
+  id: 01kxkgpc87kh7rpfp50ksmszyc
+  text: 'Iteration 1 review verdict: 3 findings, all one root cause — line-split/decode logic (split on \n, lossy UTF-8, strip trailing \r) is duplicated between OutputBuffer.logLines and ShellState.readLogLines. Task stayed in `review`. Starting iteration 2: /implement to extract one shared split-and-decode function that both delegate to (OutputBuffer keeps its binary-detection wrapper; ShellState keeps its file-reading wrapper).'
+  timestamp: 2026-07-15T18:30:14.535033+00:00
+- actor: claude-code
+  id: 01kxkgw9c5ts8k5csnt38k0gv0
+  text: |-
+    Iteration 2: consolidated the duplicated split-and-decode pipeline to a single home. Added `OutputBuffer.splitLogLines<Bytes: Collection>(_:) -> [String] where Bytes.Element == UInt8` (static, module-internal) — the one place that splits on the `\n` byte, decodes each line as lossy UTF-8, and strips a trailing `\r`. Both call sites now delegate: `OutputBuffer.logLines` keeps its empty/binary-detection wrapper then calls `Self.splitLogLines(data)`; `ShellState.readLogLines` keeps its `Data(contentsOf:)` file-reading wrapper then calls `OutputBuffer.splitLogLines(data)`. Made the shared fn generic over `Collection<UInt8>` so ShellState passes `Data` straight through (no full-buffer copy, matching the prior in-place `Data.split`) and OutputBuffer passes `[UInt8]`.
+
+    Grep confirms the pipeline (`split(separator: UInt8(ascii: "\n")...)` + `hasSuffix("\r")`) now exists in exactly ONE place (OutputBuffer.swift), zero recurrences elsewhere in Sources. Existing CRLF coverage gates both paths: OutputBufferTests.stdoutLinesStripTrailingCarriageReturn and ShellStateTests.getLinesStripsTrailingCarriageReturnButKeepsSpaces. Pure behavior-preserving refactor (tdd REFACTOR phase; existing suite is the gate). Full `swift test`: 63 tests / 5 suites green (exit 0); `swift build` 0 warnings / 0 errors; no leaked sleep processes. (Note: a transient sourcekit-lsp "Cannot find OutputBuffer in scope" diagnostic was a stale-index false positive — no LSP installed here — the compiler resolves it fine; build is clean.)
+  timestamp: 2026-07-15T18:33:28.197721+00:00
+- actor: claude-code
+  id: 01kxkh2brtpr19dmk7xaf8cr7x
+  text: 'Iteration 2: all 3 findings fixed at root — extracted a single `OutputBuffer.splitLogLines<Bytes: Collection>(_:) where Element == UInt8`; both OutputBuffer.logLines (binary-detection wrapper) and ShellState.readLogLines (file-read wrapper) delegate to it. Grep confirms the split/decode pipeline now exists in exactly one place. /test re-confirmed green (63 tests / 5 suites, 0 warnings, no leaks). Committing checkpoint, then re-reviewing HEAD~1..HEAD.'
+  timestamp: 2026-07-15T18:36:47.258575+00:00
 depends_on:
 - 01KWYJ2FNNZ1HD5TP11KVA4DTN
 position_column: doing
@@ -99,3 +114,9 @@ Implement `ShellRunner` in `Sources/ShellTool/ShellRunner.swift` using `swift-su
 
 ## Workflow
 - Use `/tdd`. Do the process-group spike (risk §7.1) as the first RED/GREEN cycle before building out the rest of the runner — if swift-subprocess can't do it, the posix_spawn fallback changes only the spawn call, not the tests above.
+
+## Review Findings (2026-07-15 13:23)
+
+- [x] `Sources/ShellTool/OutputBuffer.swift:170` — Line-splitting logic is duplicated in ShellState.readLogLines — both functions split on `\n` bytes, decode as lossy UTF-8, and strip trailing `\r` in identical ways. The shared logic should be extracted into a utility function so changes to CRLF handling, encoding, or splitting strategy need only be made once. Extract the split-and-decode logic into a shared static function (e.g., `splitLogLines(_ data: [UInt8]) -> [String]`) and call it from both OutputBuffer.logLines and ShellState.readLogLines. OutputBuffer.logLines can keep its binary-detection wrapper, ShellState.readLogLines its file-reading wrapper, but both delegate the core logic to the shared function.
+- [x] `Sources/ShellTool/OutputBuffer.swift:211` — Byte-line-splitting logic is duplicated in ShellState.readLogLines; the comment explicitly notes this should be 'the same way `ShellState` scans the log back', yet both functions independently implement the identical byte-processing pipeline (split on \n, decode UTF-8, strip trailing \r). Extract this byte-line-splitting pattern into a shared utility function (e.g., `private func decodeLogLines(_ data: [UInt8]) -> [String]`) defined once in a common location, so both OutputBuffer and ShellState invoke the same implementation and stay synchronized if the format ever changes.
+- [x] `Sources/ShellTool/OutputBuffer.swift:216` — The line-splitting algorithm in `logLines` is verbatim copied in `ShellState.readLogLines`, creating a maintenance burden when the logic needs to be updated. Extract the line-splitting logic into a shared utility function (e.g., `private static func splitLogLines(_ data: [UInt8]) -> [String]`) in a common location and call it from both `OutputBuffer.logLines` and `ShellState.readLogLines`. Both methods need: split on `\n` byte, decode as lossy UTF-8, strip trailing `\r`.

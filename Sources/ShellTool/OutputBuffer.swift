@@ -187,10 +187,9 @@ struct OutputBuffer {
     }
 
     /// Split a stored stream into log lines the same way `ShellState` scans the
-    /// log back: split on the `\n` **byte** (not a grapheme, so a `\r\n` cluster
-    /// still splits), decode each line as lossy UTF-8, and strip a trailing `\r`
-    /// (CRLF parity with Rust's `BufRead::lines()`). A binary stream collapses to
-    /// its single placeholder line.
+    /// log back, adding this buffer's binary-detection wrapper: a binary stream
+    /// collapses to its single placeholder line, while text delegates to the
+    /// shared `splitLogLines`.
     private func logLines(from data: [UInt8]) -> [String] {
         // An empty stream contributes no log lines — even when the *other*
         // stream flipped the shared binary flag, there is nothing here to stand
@@ -199,7 +198,24 @@ struct OutputBuffer {
         if binaryDetected || Self.isBinary(data) {
             return [Self.format(data, binaryDetected: binaryDetected)]
         }
-        return data
+        return Self.splitLogLines(data)
+    }
+
+    /// Split raw log bytes into lines the one way the shell log is written and
+    /// read back: split on the `\n` **byte** (not a grapheme, so a `\r\n`
+    /// cluster still splits), decode each line as lossy UTF-8 so undecodable
+    /// output can't abort the scan, and strip a trailing `\r` (CRLF parity with
+    /// Rust's `BufRead::lines()`).
+    ///
+    /// This is the single home for the split-and-decode pipeline shared by
+    /// `OutputBuffer.logLines` (via its binary-detection wrapper) and
+    /// `ShellState.readLogLines` (via its file-reading wrapper); both delegate
+    /// here so a change to CRLF handling, encoding, or splitting is made once.
+    /// Generic over any `UInt8` collection so callers pass `[UInt8]` or `Data`
+    /// without a full-buffer copy.
+    static func splitLogLines<Bytes: Collection>(_ data: Bytes) -> [String]
+    where Bytes.Element == UInt8 {
+        data
             .split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true)
             .map { lineBytes in
                 let line = String(decoding: lineBytes, as: UTF8.self)

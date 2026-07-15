@@ -287,18 +287,15 @@ actor ShellState {
 
     // MARK: - Log scanning helpers
 
-    /// Read the log file and split it into lines on `\n` byte boundaries,
-    /// decoding each line's bytes as UTF-8 (lossily) so undecodable output in
-    /// one line cannot abort the whole scan. A trailing `\r` is dropped to
-    /// mirror Rust's `BufRead::lines()`, which strips the `\r` of a `\r\n`.
+    /// Read the log file and split it into lines, delegating the byte-level
+    /// split-and-decode to the shared `OutputBuffer.splitLogLines` so this
+    /// reader and the writer's `OutputBuffer.logLines` stay in lockstep on
+    /// `\n`-byte splitting, lossy UTF-8 decoding, and CRLF handling. This method
+    /// keeps only the file-reading wrapper. `Data` is passed straight through
+    /// (no full-buffer copy) via the shared function's `Collection<UInt8>`.
     private func readLogLines() throws -> [String] {
         let data = try Data(contentsOf: logURL)
-        return data
-            .split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true)
-            .map { bytes in
-                let line = String(decoding: bytes, as: UTF8.self)
-                return line.hasSuffix("\r") ? String(line.dropLast()) : line
-            }
+        return OutputBuffer.splitLogLines(data)
     }
 
     /// Parse one `{sessionId}:{cmdId}:{lineNumber}:{text}` log line into a

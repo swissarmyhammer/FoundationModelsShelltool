@@ -41,6 +41,16 @@ struct ShellRunner {
         /// Optional wall-clock timeout; `nil` means no timeout is applied.
         var timeout: Duration?
 
+        /// Create a shell execution request.
+        ///
+        /// - Parameters:
+        ///   - command: the command string passed to `sh -c`.
+        ///   - workingDirectory: working directory; `nil` inherits the calling
+        ///     process's directory.
+        ///   - environment: environment variables layered on top of the
+        ///     inherited environment.
+        ///   - timeout: optional wall-clock timeout; `nil` means no timeout is
+        ///     applied.
         init(
             command: String,
             workingDirectory: String? = nil,
@@ -64,6 +74,8 @@ struct ShellRunner {
         var exitCode: Int
     }
 
+    /// Which concurrent child task in `run`'s task group just completed: a
+    /// stream reader reaching EOF, or the optional timeout timer elapsing.
     private enum BodyEvent: Sendable {
         case streamFinished
         case timerFinished
@@ -220,16 +232,28 @@ struct ShellRunner {
 /// so the shared size cap is enforced across stdout and stderr without a data
 /// race on the buffer.
 private actor OutputCollector {
+    /// The single buffer both stream readers write through, so the shared cap
+    /// is enforced across stdout and stderr.
     private var buffer: OutputBuffer
 
+    /// Create a collector whose buffer caps combined output at `maxSize` bytes.
+    ///
+    /// - Parameter maxSize: total captured-output cap in bytes, shared across
+    ///   stdout and stderr.
     init(maxSize: Int) {
         buffer = OutputBuffer(maxSize: maxSize)
     }
 
+    /// Append a raw stdout byte chunk to the buffer.
+    ///
+    /// - Parameter data: the raw bytes read from the child's stdout.
     func appendStdout(_ data: [UInt8]) {
         buffer.appendStdout(data)
     }
 
+    /// Append a raw stderr byte chunk to the buffer.
+    ///
+    /// - Parameter data: the raw bytes read from the child's stderr.
     func appendStderr(_ data: [UInt8]) {
         buffer.appendStderr(data)
     }

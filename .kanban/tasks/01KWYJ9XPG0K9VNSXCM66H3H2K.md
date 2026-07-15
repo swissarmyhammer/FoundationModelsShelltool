@@ -86,8 +86,8 @@ depends_on:
 - 01KWYJ2X4G62CNVVCZZP15SXER
 - 01KWYJ3DKZTTR3VYT7MFZTQ0G3
 - 01KWYJ3TNK43WPMM9T8E7RQJ37
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8480'
 title: ExecuteCommand op + ShellContext
 ---
 ## What

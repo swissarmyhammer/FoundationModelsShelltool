@@ -28,6 +28,8 @@ struct OutputBuffer {
     static let truncationMarker = "\n[Output truncated - exceeded size limit]"
     /// Bytes of an appended chunk scanned for a null byte during binary sniffing.
     static let binaryDetectionSampleBytes = 8 * 1024
+    /// The `\n` byte the shell log is split, truncated, and trimmed on.
+    static let newlineByte = UInt8(ascii: "\n")
 
     /// Maximum total stored size in bytes, shared across stdout and stderr.
     let maxSize: Int
@@ -134,12 +136,20 @@ struct OutputBuffer {
 
     private mutating func makeRoom(for neededSpace: Int) {
         if !stdoutData.isEmpty {
-            stdoutData.removeLast(min(neededSpace, stdoutData.count))
-            Self.trimToLineBoundary(&stdoutData)
+            Self.trimBuffer(&stdoutData, neededSpace: neededSpace)
         } else if !stderrData.isEmpty {
-            stderrData.removeLast(min(neededSpace, stderrData.count))
-            Self.trimToLineBoundary(&stderrData)
+            Self.trimBuffer(&stderrData, neededSpace: neededSpace)
         }
+    }
+
+    /// Drop up to `neededSpace` bytes off the end of `buffer`, then trim back to
+    /// the last line boundary. Shared by `makeRoom`'s stdout/stderr branches so
+    /// the drop-then-trim step lives in one place. Static (like
+    /// `trimToLineBoundary`) so a branch can pass `&stdoutData`/`&stderrData`
+    /// without an exclusive-access conflict on `self`.
+    private static func trimBuffer(_ buffer: inout [UInt8], neededSpace: Int) {
+        buffer.removeLast(min(neededSpace, buffer.count))
+        trimToLineBoundary(&buffer)
     }
 
     // MARK: - Helpers
@@ -149,7 +159,7 @@ struct OutputBuffer {
     private static func safeTruncationPoint(_ data: [UInt8], upTo limit: Int) -> Int {
         let slice = data[0..<limit]
         if slice.isEmpty { return 0 }
-        for index in stride(from: limit - 1, through: 0, by: -1) where data[index] == UInt8(ascii: "\n") {
+        for index in stride(from: limit - 1, through: 0, by: -1) where data[index] == Self.newlineByte {
             return index + 1
         }
         for index in stride(from: limit - 1, through: 0, by: -1) {
@@ -162,7 +172,7 @@ struct OutputBuffer {
     }
 
     private static func trimToLineBoundary(_ buffer: inout [UInt8]) {
-        while let last = buffer.last, last != UInt8(ascii: "\n") {
+        while let last = buffer.last, last != Self.newlineByte {
             buffer.removeLast()
         }
     }
@@ -216,7 +226,7 @@ struct OutputBuffer {
     static func splitLogLines<Bytes: Collection>(_ data: Bytes) -> [String]
     where Bytes.Element == UInt8 {
         data
-            .split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true)
+            .split(separator: Self.newlineByte, omittingEmptySubsequences: true)
             .map { lineBytes in
                 let line = String(decoding: lineBytes, as: UTF8.self)
                 return line.hasSuffix("\r") ? String(line.dropLast()) : line

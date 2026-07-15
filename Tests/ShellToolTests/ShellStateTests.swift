@@ -58,9 +58,9 @@ import Testing
         let state = try makeState(in: tmp)
 
         let id = await state.startCommand("echo hello")
-        try await state.appendLines(commandId: id, stdout: ["hello", "world"])
+        try await state.appendLines(commandID: id, stdout: ["hello", "world"])
 
-        let lines = try await state.getLines(commandId: id)
+        let lines = try await state.getLines(commandID: id)
         #expect(lines == [LogLine(lineNumber: 1, text: "hello"),
                           LogLine(lineNumber: 2, text: "world")])
     }
@@ -80,7 +80,7 @@ import Testing
 
     // MARK: - Ids and line numbering
 
-    @Test func commandIdsAreMonotonicAndOneBased() async throws {
+    @Test func commandIDsAreMonotonicAndOneBased() async throws {
         let tmp = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: tmp) }
         let state = try makeState(in: tmp)
@@ -99,11 +99,11 @@ import Testing
         let state = try makeState(in: tmp)
 
         let id = await state.startCommand("noisy")
-        try await state.appendLines(commandId: id,
+        try await state.appendLines(commandID: id,
                                     stdout: ["out1", "out2"],
                                     stderr: ["err1", "err2"])
 
-        let lines = try await state.getLines(commandId: id)
+        let lines = try await state.getLines(commandID: id)
         #expect(lines == [
             LogLine(lineNumber: 1, text: "out1"),
             LogLine(lineNumber: 2, text: "out2"),
@@ -122,17 +122,17 @@ import Testing
         let shellDir = tmp.appendingPathComponent(".shell")
         let a = try ShellState(preferredDirectory: shellDir)
         let b = try ShellState(preferredDirectory: shellDir)
-        #expect(a.sessionId != b.sessionId)
+        #expect(a.sessionID != b.sessionID)
 
         let idA = await a.startCommand("a")
         let idB = await b.startCommand("b")
-        try await a.appendLines(commandId: idA, stdout: ["shared_word from A"])
-        try await b.appendLines(commandId: idB, stdout: ["shared_word from B"])
+        try await a.appendLines(commandID: idA, stdout: ["shared_word from A"])
+        try await b.appendLines(commandID: idB, stdout: ["shared_word from B"])
 
         // getLines is per-session: each state sees only its own lines.
-        let aLines = try await a.getLines(commandId: idA)
+        let aLines = try await a.getLines(commandID: idA)
         #expect(aLines == [LogLine(lineNumber: 1, text: "shared_word from A")])
-        let bLines = try await b.getLines(commandId: idB)
+        let bLines = try await b.getLines(commandID: idB)
         #expect(bLines == [LogLine(lineNumber: 1, text: "shared_word from B")])
 
         // grep is per-session too: the pattern matches both lines on disk, but
@@ -151,7 +151,7 @@ import Testing
         let state = try makeState(in: tmp)
 
         let id = await state.startCommand("many")
-        try await state.appendLines(commandId: id, stdout: (1...20).map { "match_\($0)" })
+        try await state.appendLines(commandID: id, stdout: (1...20).map { "match_\($0)" })
 
         let result = try await state.grep(pattern: "match_", limit: 5)
         #expect(result.results.count == 5)
@@ -163,7 +163,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: tmp) }
         let state = try makeState(in: tmp)
         let id = await state.startCommand("x")
-        try await state.appendLines(commandId: id, stdout: ["text"])
+        try await state.appendLines(commandID: id, stdout: ["text"])
 
         await #expect(throws: (any Error).self) {
             _ = try await state.grep(pattern: "[unclosed")
@@ -175,7 +175,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: tmp) }
         let state = try makeState(in: tmp)
         let id = await state.startCommand("literal")
-        try await state.appendLines(commandId: id,
+        try await state.appendLines(commandID: id,
                                     stdout: ["a.b matches here", "axb should not match"])
 
         // As a literal, "a.b" only matches the line containing "a.b".
@@ -195,9 +195,9 @@ import Testing
         defer { try? FileManager.default.removeItem(at: tmp) }
         let state = try makeState(in: tmp)
         let id = await state.startCommand("seq")
-        try await state.appendLines(commandId: id, stdout: (1...5).map { "line\($0)" })
+        try await state.appendLines(commandID: id, stdout: (1...5).map { "line\($0)" })
 
-        let all = try await state.getLines(commandId: id)
+        let all = try await state.getLines(commandID: id)
         #expect(all.count == 5)
         #expect(all.first == LogLine(lineNumber: 1, text: "line1"))
         #expect(all.last == LogLine(lineNumber: 5, text: "line5"))
@@ -208,9 +208,9 @@ import Testing
         defer { try? FileManager.default.removeItem(at: tmp) }
         let state = try makeState(in: tmp)
         let id = await state.startCommand("seq")
-        try await state.appendLines(commandId: id, stdout: (1...10).map { "data\($0)" })
+        try await state.appendLines(commandID: id, stdout: (1...10).map { "data\($0)" })
 
-        let mid = try await state.getLines(commandId: id, start: 3, end: 7)
+        let mid = try await state.getLines(commandID: id, start: 3, end: 7)
         #expect(mid.map(\.lineNumber) == [3, 4, 5, 6, 7])
         #expect(mid.first?.text == "data3")
         #expect(mid.last?.text == "data7")
@@ -222,7 +222,7 @@ import Testing
         let state = try makeState(in: tmp)
         _ = await state.startCommand("real")
 
-        let result = try await state.getLines(commandId: 999)
+        let result = try await state.getLines(commandID: 999)
         #expect(result.isEmpty)
     }
 
@@ -235,7 +235,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: tmp) }
         let state = try makeState(in: tmp)
         let id = await state.startCommand("trailing")
-        try await state.appendLines(commandId: id, stdout: ["match here   "])
+        try await state.appendLines(commandID: id, stdout: ["match here   "])
 
         let result = try await state.grep(pattern: "match")
         #expect(result.results.first?.text == "match here")
@@ -249,9 +249,9 @@ import Testing
         defer { try? FileManager.default.removeItem(at: tmp) }
         let state = try makeState(in: tmp)
         let id = await state.startCommand("crlf")
-        try await state.appendLines(commandId: id, stdout: ["carriage\r", "spaces here  "])
+        try await state.appendLines(commandID: id, stdout: ["carriage\r", "spaces here  "])
 
-        let lines = try await state.getLines(commandId: id)
+        let lines = try await state.getLines(commandID: id)
         #expect(lines == [LogLine(lineNumber: 1, text: "carriage"),
                           LogLine(lineNumber: 2, text: "spaces here  ")])
     }
@@ -299,7 +299,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: tmp) }
         let state = try makeState(in: tmp)
         let id = await state.startCommand("echo done")
-        await state.completeCommand(commandId: id, exitCode: 0)
+        await state.completeCommand(commandID: id, exitCode: 0)
         let commands = await state.listCommands()
         #expect(commands[0].status == .completed)
         #expect(commands[0].exitCode == 0)
@@ -311,7 +311,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: tmp) }
         let state = try makeState(in: tmp)
         let id = await state.startCommand("sleep 999")
-        await state.completeCommand(commandId: id, status: .timedOut, exitCode: -1)
+        await state.completeCommand(commandID: id, status: .timedOut, exitCode: -1)
         let commands = await state.listCommands()
         #expect(commands[0].status == .timedOut)
         #expect(commands[0].exitCode == -1)
@@ -324,7 +324,7 @@ import Testing
         let state = try makeState(in: tmp)
         _ = await state.startCommand("noproc")
         await #expect(throws: (any Error).self) {
-            _ = try await state.killProcess(commandId: 1)
+            _ = try await state.killProcess(commandID: 1)
         }
     }
 
@@ -338,12 +338,12 @@ import Testing
 
         let id = await state.startCommand("sleep 60")
         let pid = try spawnKillableChild()
-        await state.registerProcess(commandId: id, pid: pid)
+        await state.registerProcess(commandID: id, pid: pid)
 
         // The child is genuinely alive before we kill it.
         #expect(kill(pid, 0) == 0)
 
-        let record = try await state.killProcess(commandId: id)
+        let record = try await state.killProcess(commandID: id)
         #expect(record.status == .killed)
         #expect(record.completedAt != nil)
 
@@ -355,7 +355,7 @@ import Testing
         // The running-process entry was dropped: a second kill finds nothing to
         // signal and surfaces the no-running-process error.
         await #expect(throws: (any Error).self) {
-            _ = try await state.killProcess(commandId: id)
+            _ = try await state.killProcess(commandID: id)
         }
 
         // Genuine round-trip: reap the child (blocks until it exits — no timing
@@ -375,7 +375,7 @@ import Testing
         let state = try makeState(in: tmp)
 
         let id = await state.startCommand("echo hi")
-        await state.completeIfRunning(commandId: id, status: .completed, exitCode: 0)
+        await state.completeIfRunning(commandID: id, status: .completed, exitCode: 0)
 
         let commands = await state.listCommands()
         #expect(commands[0].status == .completed)
@@ -394,11 +394,11 @@ import Testing
 
         let id = await state.startCommand("sleep 60")
         let pid = try spawnKillableChild()
-        await state.registerProcess(commandId: id, pid: pid)
-        _ = try await state.killProcess(commandId: id)  // marks .killed
+        await state.registerProcess(commandID: id, pid: pid)
+        _ = try await state.killProcess(commandID: id)  // marks .killed
 
         // The runner's post-run completion must be a no-op now.
-        await state.completeIfRunning(commandId: id, status: .completed, exitCode: 0)
+        await state.completeIfRunning(commandID: id, status: .completed, exitCode: 0)
 
         let commands = await state.listCommands()
         #expect(commands[0].status == .killed)

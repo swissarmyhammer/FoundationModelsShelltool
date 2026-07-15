@@ -108,7 +108,7 @@ import Testing
         #expect(outcome.status == .completed)
         #expect(outcome.exitCode == 0)
 
-        let lines = try await state.getLines(commandId: outcome.commandId)
+        let lines = try await state.getLines(commandID: outcome.commandID)
         #expect(lines == [LogLine(lineNumber: 1, text: "hi")])
     }
 
@@ -152,7 +152,7 @@ import Testing
             .init(
                 command: #"printf '%s|%s' "$SHELLRUNNER_TEST" "${HOME:+haveHOME}""#,
                 environment: ["SHELLRUNNER_TEST": "present"]))
-        let lines = try await state.getLines(commandId: outcome.commandId)
+        let lines = try await state.getLines(commandID: outcome.commandID)
         #expect(lines == [LogLine(lineNumber: 1, text: "present|haveHOME")])
     }
 
@@ -166,7 +166,7 @@ import Testing
 
         let outcome = try await runner.run(
             .init(command: "/bin/pwd", workingDirectory: workDir.path))
-        let lines = try await state.getLines(commandId: outcome.commandId)
+        let lines = try await state.getLines(commandID: outcome.commandID)
         let printed = lines.first?.text ?? "<none>"
         // `/bin/pwd` prints the physical cwd (`/var` → `/private/var` on macOS),
         // so compare both sides symlink-resolved.
@@ -194,7 +194,7 @@ import Testing
         #expect(outcome.status == .completed)
         #expect(outcome.exitCode == 0)
 
-        let lines = try await state.getLines(commandId: outcome.commandId)
+        let lines = try await state.getLines(commandID: outcome.commandID)
         // Truncated at a line boundary (no partial line), with the marker last.
         #expect(lines.first?.text == "line1")
         #expect(!lines.map(\.text).contains("line60"))
@@ -209,7 +209,7 @@ import Testing
 
         // 7 bytes: a b c NUL d e f — the null triggers binary detection.
         let outcome = try await runner.run(.init(command: #"printf 'abc\000def'"#))
-        let lines = try await state.getLines(commandId: outcome.commandId)
+        let lines = try await state.getLines(commandID: outcome.commandID)
         #expect(lines == [LogLine(lineNumber: 1, text: "[Binary content: 7 bytes]")])
     }
 
@@ -221,7 +221,7 @@ import Testing
 
         let outcome = try await runner.run(
             .init(command: "echo out1; echo err1 >&2; echo out2; echo err2 >&2"))
-        let lines = try await state.getLines(commandId: outcome.commandId)
+        let lines = try await state.getLines(commandID: outcome.commandID)
         #expect(lines == [
             LogLine(lineNumber: 1, text: "out1"),
             LogLine(lineNumber: 2, text: "out2"),

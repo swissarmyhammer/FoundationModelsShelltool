@@ -57,7 +57,7 @@ struct ShellRunner {
     /// The result of a completed run.
     struct Outcome: Sendable {
         /// The command id assigned by `ShellState.startCommand`.
-        var commandId: Int
+        var commandID: Int
         /// Final status (`completed` or `timed_out`).
         var status: CommandStatus
         /// Exit code; signal death and timeout both report `-1` (Rust parity).
@@ -77,7 +77,7 @@ struct ShellRunner {
     /// `run`. The runner accepts pre-validated input and does not duplicate those
     /// limits — the only cap it owns is the captured-output size (`maxOutputSize`).
     func run(_ request: Request) async throws -> Outcome {
-        let commandId = await state.startCommand(request.command)
+        let commandID = await state.startCommand(request.command)
 
         let config = Configuration(
             executable: .path(FilePath("/bin/sh")),
@@ -98,7 +98,7 @@ struct ShellRunner {
             ) { execution in
                 let pid = execution.processIdentifier.value
                 pidBox.withLock { $0 = pid }
-                await st.registerProcess(commandId: commandId, pid: pid)
+                await st.registerProcess(commandID: commandID, pid: pid)
                 // Guaranteed teardown on EVERY body exit path (normal, timeout,
                 // error): group-kill so any backgrounded grandchildren die and
                 // the library's reap can complete. Killing an already-dead group
@@ -135,7 +135,7 @@ struct ShellRunner {
                 // per-command counter (`ShellState.appendLines`).
                 let buffer = await collector.finish()
                 try await st.appendLines(
-                    commandId: commandId, stdout: buffer.stdoutLines, stderr: buffer.stderrLines)
+                    commandID: commandID, stdout: buffer.stdoutLines, stderr: buffer.stderrLines)
                 return timedOutFlag.withLock { $0 }
             }
         } onCancel: {
@@ -166,9 +166,9 @@ struct ShellRunner {
         // Atomic transition: only finalize if still running, so a concurrent
         // `kill process` op that already marked the record `.killed` is not
         // clobbered (the check and write happen in one `ShellState` hop).
-        await state.completeIfRunning(commandId: commandId, status: status, exitCode: exitCode)
+        await state.completeIfRunning(commandID: commandID, status: status, exitCode: exitCode)
 
-        return Outcome(commandId: commandId, status: status, exitCode: exitCode)
+        return Outcome(commandID: commandID, status: status, exitCode: exitCode)
     }
 
     /// Platform options that put the child in its own process group (pgid ==

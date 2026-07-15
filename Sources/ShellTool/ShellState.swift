@@ -8,7 +8,7 @@
 // the line-by-line log scans in `getLines`/`grep`.
 //
 // History is per session (per process): every log line is prefixed with this
-// process's `sessionId`, and the readers filter by `{sessionId}:{cmdId}:`, so a
+// process's `sessionID`, and the readers filter by `{sessionID}:{cmdID}:`, so a
 // query only ever sees this session's output even when several sessions share
 // one `.shell` directory. This is parity with the Rust `swissarmyhammer` shell
 // tool's `ShellState`.
@@ -64,7 +64,7 @@ struct LogLine: Equatable, Sendable {
 /// One matching line returned by `grep`.
 struct GrepResult: Equatable, Sendable {
     /// The command the line belongs to.
-    let commandId: Int
+    let commandID: Int
     /// The command-scoped 1-based line number.
     let lineNumber: Int
     /// The matching line text.
@@ -107,7 +107,7 @@ enum ShellStateError: Error, CustomStringConvertible {
 /// The virtual shell's history and output store — one instance per process.
 actor ShellState {
     /// A fresh session identifier, unique to this process.
-    nonisolated let sessionId: String
+    nonisolated let sessionID: String
     /// The append-only `.shell/log` file this session reads and writes.
     nonisolated let logURL: URL
 
@@ -126,8 +126,8 @@ actor ShellState {
     /// cannot be created there. Falling back keeps construction from failing.
     init(preferredDirectory: URL?) throws {
         let session = UUID().uuidString
-        let directory = try Self.resolveDirectory(preferred: preferredDirectory, sessionId: session)
-        self.sessionId = session
+        let directory = try Self.resolveDirectory(preferred: preferredDirectory, sessionID: session)
+        self.sessionID = session
         self.logURL = directory.appendingPathComponent("log")
     }
 
@@ -157,22 +157,22 @@ actor ShellState {
     }
 
     /// Register the running process-group leader pid for a command.
-    func registerProcess(commandId: Int, pid: pid_t) {
-        processes[commandId] = pid
+    func registerProcess(commandID: Int, pid: pid_t) {
+        processes[commandID] = pid
     }
 
     /// Append captured output for a command to the log — every `stdout` line
     /// then every `stderr` line, sharing one continuing 1-based per-command
-    /// line counter, each stored as `{sessionId}:{cmdId}:{lineNumber}:{text}\n`.
-    func appendLines(commandId: Int, stdout: [String] = [], stderr: [String] = []) throws {
-        guard let index = commands.firstIndex(where: { $0.id == commandId }) else {
-            throw ShellStateError.unknownCommand(commandId)
+    /// line counter, each stored as `{sessionID}:{cmdID}:{lineNumber}:{text}\n`.
+    func appendLines(commandID: Int, stdout: [String] = [], stderr: [String] = []) throws {
+        guard let index = commands.firstIndex(where: { $0.id == commandID }) else {
+            throw ShellStateError.unknownCommand(commandID)
         }
 
         var buffer = Data()
         for line in stdout + stderr {
             commands[index].lineCount += 1
-            let entry = "\(sessionId):\(commandId):\(commands[index].lineCount):\(line)\n"
+            let entry = "\(sessionID):\(commandID):\(commands[index].lineCount):\(line)\n"
             buffer.append(Data(entry.utf8))
         }
         guard !buffer.isEmpty else { return }
@@ -185,9 +185,9 @@ actor ShellState {
 
     /// Mark a command finished with the given status and exit code, dropping its
     /// running-process entry. A no-op for an unknown id (parity).
-    func completeCommand(commandId: Int, status: CommandStatus = .completed, exitCode: Int? = nil) {
-        processes[commandId] = nil
-        guard let index = commands.firstIndex(where: { $0.id == commandId }) else { return }
+    func completeCommand(commandID: Int, status: CommandStatus = .completed, exitCode: Int? = nil) {
+        processes[commandID] = nil
+        guard let index = commands.firstIndex(where: { $0.id == commandID }) else { return }
         commands[index].status = status
         commands[index].exitCode = exitCode
         commands[index].completedAt = ContinuousClock().now
@@ -200,11 +200,11 @@ actor ShellState {
     /// intervening suspension, a concurrent `killProcess` that already flipped
     /// the record to `.killed` is never clobbered back. A no-op for an unknown
     /// id or an already-finalized command.
-    func completeIfRunning(commandId: Int, status: CommandStatus, exitCode: Int?) {
-        guard let index = commands.firstIndex(where: { $0.id == commandId }),
+    func completeIfRunning(commandID: Int, status: CommandStatus, exitCode: Int?) {
+        guard let index = commands.firstIndex(where: { $0.id == commandID }),
             commands[index].status == .running
         else { return }
-        completeCommand(commandId: commandId, status: status, exitCode: exitCode)
+        completeCommand(commandID: commandID, status: status, exitCode: exitCode)
     }
 
     /// Kill a running command by sending `SIGKILL` to its process group, then
@@ -212,15 +212,15 @@ actor ShellState {
     /// registered for the id, so the caller never sends a signal to a stale or
     /// wrong process group.
     @discardableResult
-    func killProcess(commandId: Int) throws -> CommandRecord {
-        guard let pid = processes[commandId] else {
-            throw ShellStateError.noRunningProcess(commandId)
+    func killProcess(commandID: Int) throws -> CommandRecord {
+        guard let pid = processes[commandID] else {
+            throw ShellStateError.noRunningProcess(commandID)
         }
         killpg(pid, SIGKILL)
-        processes[commandId] = nil
+        processes[commandID] = nil
 
-        guard let index = commands.firstIndex(where: { $0.id == commandId }) else {
-            throw ShellStateError.unknownCommand(commandId)
+        guard let index = commands.firstIndex(where: { $0.id == commandID }) else {
+            throw ShellStateError.unknownCommand(commandID)
         }
         commands[index].status = .killed
         commands[index].completedAt = ContinuousClock().now
@@ -237,11 +237,11 @@ actor ShellState {
 
     /// Read a command's lines from the log, optionally bounded to
     /// `start...end` (defaults: `1` and unbounded). Scans only this session's
-    /// lines for `commandId`; an unknown id yields an empty result (parity).
-    func getLines(commandId: Int, start: Int? = nil, end: Int? = nil) throws -> [LogLine] {
+    /// lines for `commandID`; an unknown id yields an empty result (parity).
+    func getLines(commandID: Int, start: Int? = nil, end: Int? = nil) throws -> [LogLine] {
         let lower = start ?? 1
         let upper = end ?? Int.max
-        let prefix = "\(sessionId):\(commandId):"
+        let prefix = "\(sessionID):\(commandID):"
 
         var results: [LogLine] = []
         for line in try readLogLines() {
@@ -257,11 +257,11 @@ actor ShellState {
     }
 
     /// Search this session's log lines with a regex, optionally scoped to one
-    /// `commandId`. `literal: true` pre-escapes the pattern so it matches
+    /// `commandID`. `literal: true` pre-escapes the pattern so it matches
     /// verbatim. Matching is line-by-line — one command's binary garbage can't
     /// break another's search — and capped at `limit` (default 10), while
     /// `total` reflects every match found.
-    func grep(pattern: String, literal: Bool = false, commandId: Int? = nil, limit: Int? = nil) throws -> GrepResults {
+    func grep(pattern: String, literal: Bool = false, commandID: Int? = nil, limit: Int? = nil) throws -> GrepResults {
         let cap = limit ?? 10
         let source = literal ? NSRegularExpression.escapedPattern(for: pattern) : pattern
         let regex: Regex<AnyRegexOutput>
@@ -271,12 +271,12 @@ actor ShellState {
             throw ShellStateError.invalidRegex(pattern: pattern, underlying: error)
         }
 
-        let sessionPrefix = "\(sessionId):"
+        let sessionPrefix = "\(sessionID):"
         var results: [GrepResult] = []
         var total = 0
         for line in try readLogLines() {
             guard ((try? regex.firstMatch(in: line)) ?? nil) != nil else { continue }
-            guard let entry = Self.parseLogLine(line, sessionPrefix: sessionPrefix, commandIdFilter: commandId) else { continue }
+            guard let entry = Self.parseLogLine(line, sessionPrefix: sessionPrefix, commandIDFilter: commandID) else { continue }
             total += 1
             if results.count < cap {
                 results.append(entry)
@@ -298,21 +298,21 @@ actor ShellState {
         return OutputBuffer.splitLogLines(data)
     }
 
-    /// Parse one `{sessionId}:{cmdId}:{lineNumber}:{text}` log line into a
+    /// Parse one `{sessionID}:{cmdID}:{lineNumber}:{text}` log line into a
     /// `GrepResult`, rejecting lines from another session, lines failing the
     /// optional command-id filter, and lines whose fields don't parse.
-    private static func parseLogLine(_ line: String, sessionPrefix: String, commandIdFilter: Int?) -> GrepResult? {
+    private static func parseLogLine(_ line: String, sessionPrefix: String, commandIDFilter: Int?) -> GrepResult? {
         guard line.hasPrefix(sessionPrefix) else { return nil }
         let rest = line.dropFirst(sessionPrefix.count)
         let parts = rest.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
-        guard parts.count == 3, let commandId = Int(parts[0]) else { return nil }
-        if let filter = commandIdFilter, filter != commandId { return nil }
+        guard parts.count == 3, let commandID = Int(parts[0]) else { return nil }
+        if let filter = commandIDFilter, filter != commandID { return nil }
         guard let lineNumber = Int(parts[1]) else { return nil }
         // Mirror Rust `grep`'s `str::trim_end()`: drop trailing whitespace from
         // the matched line's text. (`getLines` deliberately keeps it.)
         var text = parts[2]
         while let last = text.last, last.isWhitespace { text = text.dropLast() }
-        return GrepResult(commandId: commandId, lineNumber: lineNumber, text: String(text))
+        return GrepResult(commandID: commandID, lineNumber: lineNumber, text: String(text))
     }
 
     // MARK: - Storage directory resolution
@@ -330,8 +330,8 @@ actor ShellState {
         """
 
     /// Resolve and prepare the storage directory: try `preferred`, and on any
-    /// failure fall back to `<tmp>/.shell-{sessionId}`.
-    private static func resolveDirectory(preferred: URL?, sessionId: String) throws -> URL {
+    /// failure fall back to `<tmp>/.shell-{sessionID}`.
+    private static func resolveDirectory(preferred: URL?, sessionID: String) throws -> URL {
         if let preferred {
             do {
                 try prepareDirectory(preferred)
@@ -341,7 +341,7 @@ actor ShellState {
             }
         }
         let fallback = FileManager.default.temporaryDirectory
-            .appendingPathComponent(".shell-\(sessionId)", isDirectory: true)
+            .appendingPathComponent(".shell-\(sessionID)", isDirectory: true)
         try prepareDirectory(fallback)
         return fallback
     }

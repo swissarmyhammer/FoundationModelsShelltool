@@ -73,6 +73,33 @@ comments:
   id: 01kxkh2brtpr19dmk7xaf8cr7x
   text: 'Iteration 2: all 3 findings fixed at root — extracted a single `OutputBuffer.splitLogLines<Bytes: Collection>(_:) where Element == UInt8`; both OutputBuffer.logLines (binary-detection wrapper) and ShellState.readLogLines (file-read wrapper) delegate to it. Grep confirms the split/decode pipeline now exists in exactly one place. /test re-confirmed green (63 tests / 5 suites, 0 warnings, no leaks). Committing checkpoint, then re-reviewing HEAD~1..HEAD.'
   timestamp: 2026-07-15T18:36:47.258575+00:00
+- actor: claude-code
+  id: 01kxkhv12e97k0tspsbrsnve9a
+  text: 'Iteration 2 review verdict: prior 3 duplication findings verified resolved (splitLogLines lives in one place, no recurrence). 6 NEW findings appended (13:37): (a) makeRoom removeLast+trimToLineBoundary duplicated across if/else-if — extract helper; (b) UInt8(ascii:"\n") repeated 3× — hoist to static let newlineByte; (c) ID-casing: sessionId→sessionID (ShellState.swift:127,235), commandId→commandID (179,187). Task stayed in `review`. Starting iteration 3: /implement. For the ID renames, preserve any Codable/serialization key contract via explicit CodingKeys (same technique used for isValidationEnabled on ShellPolicy).'
+  timestamp: 2026-07-15T18:50:15.502619+00:00
+- actor: claude-code
+  id: 01kxkj7eyv09c5bpr5gft5mp8p
+  text: |-
+    Iteration 3: all 6 review findings (13:37) fixed at root. Pulled back to `doing`.
+
+    OutputBuffer.swift:
+    - Finding 1 (makeRoom duplication): extracted `private static func trimBuffer(_ buffer: inout [UInt8], neededSpace: Int)` doing `removeLast(min(neededSpace, count)) + trimToLineBoundary`, called from both the stdout and stderr branches. NOTE: made it `static` rather than the finding's literal `mutating` suggestion — a mutating instance method receiving `&self.stdoutData` triggers a Swift exclusive-access-to-self conflict; static (matching the existing `trimToLineBoundary`) is the compiling, prevailing-pattern form.
+    - Finding 2 (magic newline): hoisted `static let newlineByte = UInt8(ascii: "\n")` next to `binaryDetectionSampleBytes`; replaced all 3 inline `UInt8(ascii: "\n")` (safeTruncationPoint, trimToLineBoundary, splitLogLines) with `Self.newlineByte`. Grep confirms only the declaration remains.
+
+    ID-casing (findings 3-6) — swept the WHOLE class, not just the 4 cited lines, via a global rename across ShellState.swift, ShellRunner.swift, ShellStateTests.swift, ShellRunnerTests.swift:
+    - sessionId -> sessionID: property, `resolveDirectory(sessionID:)` param + its call site + `.shell-\(sessionID)` fallback, `self.sessionID`, and doc/prefix mentions.
+    - commandId -> commandID: every param on registerProcess/appendLines/completeCommand/completeIfRunning/killProcess/getLines/grep; the `GrepResult.commandID` field + its init; `ShellRunner.Outcome.commandID` field + init + local + all runner call sites; the `commandIdFilter` param -> `commandIDFilter`; the test name `commandIdsAreMonotonic...` -> `commandIDsAreMonotonic...`; and test call sites incl. `outcome.commandID`.
+    - Also swept the doc-comment placeholder `{cmdId}` -> `{cmdID}` since it too matches `[a-z]Id\b`.
+    - Final `rg 'sessionId\b|commandId\b|cmdId\b|[a-z]Id\b' Sources Tests` -> zero matches.
+
+    Serialization: NO CodingKeys needed. No renamed type conforms to Codable (only CodingKeys in the repo are the unrelated `enable_validation` mappings in ShellPolicy.swift). The `.shell/log` line format is produced by VALUE interpolation `"\(sessionID):\(commandID):\(lineCount):\(line)\n"`, so renaming the Swift symbols does not change the emitted bytes; the round-trip getLines/grep/session-isolation tests gate that. No test asserts a serialized key string.
+
+    Verification: `swift build` complete, 0 warnings / 0 errors; `swift test` = 63 tests / 5 suites, all passing, exit 0. No leaked `sleep` survivors and no test-owned zombies after the run (the one system zombie observed belongs to sshd-session, unrelated). Kept 4-space style; no repo-wide swift-format reflow. Advisory double-check verdict: PASS. Leaving in `doing` for /review.
+  timestamp: 2026-07-15T18:57:02.939750+00:00
+- actor: claude-code
+  id: 01kxkjfmcmj8y2srwze3hbma4v
+  text: 'Iteration 3: all 6 findings fixed at root. Extracted static trimBuffer helper in makeRoom; hoisted static let newlineByte (all 3 sites); full Id→ID sweep across ShellState/ShellRunner + tests (sessionID, commandID, GrepResult.commandID, Outcome.commandID, commandIDFilter, test names, doc placeholders) — `rg ''[a-z]Id\b'' Sources Tests` now zero. No CodingKeys needed: nothing renamed is Codable and the log wire format is value-interpolated, so bytes unchanged. /test re-confirmed green (63 tests / 5 suites, 0 warnings, no leaks). Committing checkpoint, then re-reviewing HEAD~1..HEAD.'
+  timestamp: 2026-07-15T19:01:30.644521+00:00
 depends_on:
 - 01KWYJ2FNNZ1HD5TP11KVA4DTN
 position_column: doing
@@ -120,3 +147,12 @@ Implement `ShellRunner` in `Sources/ShellTool/ShellRunner.swift` using `swift-su
 - [x] `Sources/ShellTool/OutputBuffer.swift:170` — Line-splitting logic is duplicated in ShellState.readLogLines — both functions split on `\n` bytes, decode as lossy UTF-8, and strip trailing `\r` in identical ways. The shared logic should be extracted into a utility function so changes to CRLF handling, encoding, or splitting strategy need only be made once. Extract the split-and-decode logic into a shared static function (e.g., `splitLogLines(_ data: [UInt8]) -> [String]`) and call it from both OutputBuffer.logLines and ShellState.readLogLines. OutputBuffer.logLines can keep its binary-detection wrapper, ShellState.readLogLines its file-reading wrapper, but both delegate the core logic to the shared function.
 - [x] `Sources/ShellTool/OutputBuffer.swift:211` — Byte-line-splitting logic is duplicated in ShellState.readLogLines; the comment explicitly notes this should be 'the same way `ShellState` scans the log back', yet both functions independently implement the identical byte-processing pipeline (split on \n, decode UTF-8, strip trailing \r). Extract this byte-line-splitting pattern into a shared utility function (e.g., `private func decodeLogLines(_ data: [UInt8]) -> [String]`) defined once in a common location, so both OutputBuffer and ShellState invoke the same implementation and stay synchronized if the format ever changes.
 - [x] `Sources/ShellTool/OutputBuffer.swift:216` — The line-splitting algorithm in `logLines` is verbatim copied in `ShellState.readLogLines`, creating a maintenance burden when the logic needs to be updated. Extract the line-splitting logic into a shared utility function (e.g., `private static func splitLogLines(_ data: [UInt8]) -> [String]`) in a common location and call it from both `OutputBuffer.logLines` and `ShellState.readLogLines`. Both methods need: split on `\n` byte, decode as lossy UTF-8, strip trailing `\r`.
+
+## Review Findings (2026-07-15 13:37)
+
+- [x] `Sources/ShellTool/OutputBuffer.swift:122` — The pattern `buffer.removeLast(...); Self.trimToLineBoundary(&buffer)` is duplicated in the if and else-if branches of `makeRoom`, differing only in the variable name. This inflates the surface area and risks drift if one branch is updated without the other. Extract a helper function `private mutating func trimBuffer(_ buffer: inout [UInt8], neededSpace: Int)` and call it from both branches, passing the appropriate buffer.
+- [x] `Sources/ShellTool/OutputBuffer.swift:152` — UInt8(ascii: "\n") is repeated 3 times (lines 152, 165, 218) and should be a single named constant so the value changes in one place. Define a static constant like `static let newlineByte = UInt8(ascii: "\n")` near line 30 (where binaryDetectionSampleBytes is defined) and replace all three occurrences with references to it.
+- [x] `Sources/ShellTool/ShellState.swift:127` — Uses parameter `sessionId` which should be `sessionID`. Update to `sessionID` once parameter is renamed.
+- [x] `Sources/ShellTool/ShellState.swift:179` — Uses parameter `commandId` which should be `commandID`. Update to `commandID` once parameter is renamed.
+- [x] `Sources/ShellTool/ShellState.swift:187` — Uses parameter `commandId` which should be `commandID`. Update to `commandID` once parameter is renamed.
+- [x] `Sources/ShellTool/ShellState.swift:235` — Uses property `sessionId` which should be `sessionID`. Update to `sessionID` once property is renamed.

@@ -16,6 +16,7 @@
 // flat-union schema all come from the upstream `OperationTool`/
 // `OperationResolver`/`SchemaFusion` machinery.
 
+import Foundation
 import FoundationModels
 import Operations
 
@@ -59,6 +60,33 @@ public enum ShellTool {
     ///   operation set, but propagated per `OperationTool.init`'s contract);
     ///   rethrows `GenerationSchema.SchemaError` on any other schema-fusion
     ///   failure.
+    /// Builds the fused `shell` tool over a freshly assembled default
+    /// `ShellContext` — the contextless entry point the `shell-demo`
+    /// executable (and any other embedder without `@testable` access) uses,
+    /// since `ShellContext` and `ShellState` are module-internal and cannot be
+    /// constructed from outside.
+    ///
+    /// The context bundles a `ShellState` over `preferredDirectory` and a
+    /// default `ShellPolicy` (the stacked builtin/user/project overlays). This
+    /// is the direct analogue of the upstream no-arg `NotesTool.make()`, which
+    /// likewise assembles its own `NotesContext`; the one added parameter lets
+    /// an embedder (or a hermetic test) point the `.shell` store somewhere
+    /// other than the working directory.
+    ///
+    /// - Parameter preferredDirectory: The `.shell` store's directory. When
+    ///   `nil` (the default) the store is rooted at `<cwd>/.shell`, falling
+    ///   back to a unique temp directory when the working directory is
+    ///   unwritable — the real-world location the executable uses. When
+    ///   non-`nil`, that directory is used as the store directly.
+    /// - Returns: The fused tool, ready to drive both an `OperationCLIDriver`
+    ///   and a `LanguageModelSession`.
+    /// - Throws: `ShellStateError.logCreationFailed` if the store's log file
+    ///   cannot be created; rethrows `make(context:)`'s schema-fusion errors.
+    public static func make(preferredDirectory: URL? = nil) throws -> OperationTool<ShellContext> {
+        let state = try preferredDirectory.map { try ShellState(preferredDirectory: $0) } ?? ShellState()
+        return try make(context: ShellContext(state: state))
+    }
+
     public static func make(context: ShellContext) throws -> OperationTool<ShellContext> {
         try OperationTool(
             name: name,

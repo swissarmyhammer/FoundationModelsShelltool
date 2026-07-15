@@ -21,8 +21,8 @@ depends_on:
 - 01KWYJ9XPG0K9VNSXCM66H3H2K
 - 01KWYJA9J0KQVDSQMHHB8R4RT6
 - 01KWYJAHWJ7WSF7RYGNCXYD60P
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8780'
 title: Fuse into ShellTool.make()
 ---
 ## What

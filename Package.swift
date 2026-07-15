@@ -70,6 +70,11 @@ let package = Package(
             name: "ShellToolTests",
             dependencies: [
                 "ShellTool",
+                // The CLI convergence tests drive the fused `shell` tool through
+                // an `OperationCLIDriver` (the same driver the `shell-demo`
+                // executable wires up) and assert its argv path converges with
+                // the model path — so the test target needs the driver too.
+                .product(name: "OperationsCLI", package: "FoundationModelsOperationTool"),
                 // Used by the builtin-config schema test to strictly decode
                 // `ShellPolicy.builtinYAML` and detect any key the lenient
                 // production decoder would silently ignore.

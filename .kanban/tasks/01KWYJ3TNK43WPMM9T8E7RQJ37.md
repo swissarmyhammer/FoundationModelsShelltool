@@ -43,6 +43,30 @@ comments:
   id: 01kxk80cwsqss0ww1tpm5x023s
   text: 'Iteration 1: implementation landed green in `doing` (36 tests / 3 suites pass, 0 failures, 0 warnings per implementer). Running /test to verify, then /commit checkpoint, then /review. Note for reviewer: implementer flagged a swift-format caveat — no `.swift-format` config in repo; running the formatter reformats the whole codebase 4-space→2-space (~1300 lines churn), so new files were kept in the repo''s prevailing 4-space style.'
   timestamp: 2026-07-15T15:58:25.689845+00:00
+- actor: claude-code
+  id: 01kxk848t1zp29re4wxfwmahhg
+  text: 'Iteration 1: /test confirmed green (36 tests, 0 warnings, 0 skipped). Checkpoint committed locally as ecb1102 "feat(shell): add ShellPolicy with stacked config and validation" (4 files, +752/-2; NOT pushed). Dispatching /review scoped to HEAD~1..HEAD.'
+  timestamp: 2026-07-15T16:00:32.577314+00:00
+- actor: claude-code
+  id: 01kxk8j0zkvj71v5v8nvdcr55n
+  text: 'Iteration 1 review verdict: 5 findings (all in ShellPolicy.swift), task stayed in `review`. Starting iteration 2: /implement to work the 5 findings at root (dead enableAuditLogging property, two duplicated numeric limits, missing explicit access modifier, duplicated config filename literal).'
+  timestamp: 2026-07-15T16:08:03.315055+00:00
+- actor: claude-code
+  id: 01kxk9tr9x9x1vjbqvc9m4wqb7
+  text: |-
+    Iteration 2 (review findings) landed in ShellPolicy.swift; all 5 findings flipped to [x].
+
+    1. Dead `enableAuditLogging` removed (property, CodingKey, decode block). Builtin YAML keeps `enable_audit_logging: true` for upstream byte-fidelity; a custom keyed init only reads declared keys, so the now-undeclared key is silently ignored (no decode failure).
+    2 & 3. Extracted `ShellSettings.defaultMaxCommandLength = 262_144` and `defaultMaxEnvValueLength = 1024` (fileprivate — `private` is impossible cross-type; both `ShellSettings.default` and `ShellPolicy.builtinYAML` reference them within the file). builtinYAML now interpolates them via `\#(...)` raw-string interpolation, so the code default and builtin config CANNOT drift (enforce, not just document).
+    4. `ShellPolicy` -> `public`. Adversarial double-check (REVISE) correctly flagged that a public struct with an internal init + internal check(...) is inert — unconstructible/uncallable externally — contradicting Package.swift ("Exposed so downstream tools ... can embed the operations directly"). Completed the public surface at root: `public init`, all three `public func check(...)`, plus the init's default-value providers `stderrWarn`/`defaultUserConfigURL()`/`defaultProjectConfigURL()` (compiler requires default-arg providers of a public init to be public). Helper types PatternRule/ShellSettings/ShellSecurityConfig stay internal — none appear in any public signature. Note: @testable import means the suite passes regardless of access level, so tests do not prove the public surface; verified via `swift build` of the library.
+    5. Extracted `private static let shellConfigFileName = ".shell/config.yaml"`, used in both default-path helpers. Remaining `.shell/config.yaml` occurrences are doc-comment prose only.
+
+    `swift build --build-tests`: 0 warnings / 0 errors. `swift test`: 36 tests / 3 suites, 0 failures. Left in `doing` for /review.
+  timestamp: 2026-07-15T16:30:17.917645+00:00
+- actor: claude-code
+  id: 01kxka2nnmv1b38wrbcmghztwn
+  text: 'Iteration 2: all 5 findings fixed at root (removed dead enableAuditLogging; extracted defaultMaxCommandLength/defaultMaxEnvValueLength constants interpolated into builtinYAML; made ShellPolicy + its init/check API public to match the exposed ShellTool library; extracted shellConfigFileName constant). /test re-confirmed green (36 tests, 0 warnings, 0 skipped). Committing checkpoint, then re-reviewing HEAD~1..HEAD.'
+  timestamp: 2026-07-15T16:34:37.364971+00:00
 depends_on:
 - 01KWYJ2FNNZ1HD5TP11KVA4DTN
 position_column: doing
@@ -88,3 +112,11 @@ Additional validation, all returned as corrective messages rather than thrown:
 
 ## Workflow
 - Use `/tdd` — the table-driven deny-list test is the natural RED-first anchor; build the stacked loader out from there.
+
+## Review Findings (2026-07-15 11:00)
+
+- [x] `Sources/ShellTool/ShellPolicy.swift:59` — Property `enableAuditLogging` in `ShellSettings` struct is decoded from configuration but never read or used anywhere in the code, making it dead weight. Remove the property if it is not needed. If it is intended for future use by ShellState or another component, add an explicit forward marker comment such as `// TODO: consumed by ShellState logging when audit feature is implemented` and potentially expose via a public getter method. Otherwise, re-add it when that consumer task lands.
+- [x] `Sources/ShellTool/ShellPolicy.swift:66` — The command length limit 262_144 is hardcoded in `ShellSettings.default` and again in `builtinYAML` at line 353; these must stay in sync or the builtin config diverges from code defaults. Define `private static let defaultMaxCommandLength = 262_144` and reference it in the default; document or enforce that `builtinYAML` must use the same value.
+- [x] `Sources/ShellTool/ShellPolicy.swift:67` — The environment variable value length limit 1024 is hardcoded in `ShellSettings.default` and again in `builtinYAML` at line 354; these must stay in sync or the builtin config diverges from code defaults. Define `private static let defaultMaxEnvValueLength = 1024` and reference it in the default; document or enforce that `builtinYAML` must use the same value.
+- [x] `Sources/ShellTool/ShellPolicy.swift:121` — ShellPolicy should explicitly declare `public` access; the rule requires explicit access modifiers on library declarations when the intent is API-shaping. Currently it relies on the implicit `internal` default. Change `struct ShellPolicy: Sendable {` to `public struct ShellPolicy: Sendable {`.
+- [x] `Sources/ShellTool/ShellPolicy.swift:312` — The config filename ".shell/config.yaml" is hardcoded and repeated at line 319; use a named constant to prevent drift if the filename changes. Define `private static let shellConfigFileName = ".shell/config.yaml"` at the top of the class and use it in both functions.

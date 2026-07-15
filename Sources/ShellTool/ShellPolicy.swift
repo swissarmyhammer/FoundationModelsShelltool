@@ -41,22 +41,27 @@ struct PatternRule: Sendable, Equatable, Decodable {
 /// (or none at all) still yields a fully-populated struct — parity with the
 /// Rust `#[serde(default)]` fields.
 struct ShellSettings: Sendable, Equatable {
+    /// Default maximum command length in characters (256 KiB). Shared between
+    /// `default` and the embedded `ShellPolicy.builtinYAML` (via interpolation)
+    /// so the code default and the builtin config can never drift.
+    fileprivate static let defaultMaxCommandLength = 262_144
+    /// Default maximum environment-variable value length in characters. Shared
+    /// between `default` and `ShellPolicy.builtinYAML` (via interpolation) so
+    /// the code default and the builtin config can never drift.
+    fileprivate static let defaultMaxEnvValueLength = 1024
+
     /// Maximum command length in characters (256 KiB by default).
     var maxCommandLength: Int
     /// Maximum environment-variable value length in characters.
     var maxEnvValueLength: Int
-    /// Whether command audit logging is enabled (carried for parity; the log
-    /// itself lives in `ShellState`).
-    var enableAuditLogging: Bool
     /// Master switch for command validation. When `false`, `check(command:)`
     /// short-circuits to "allowed" and runs no permit/deny/length checks.
     var enableValidation: Bool
 
     /// The in-code defaults, used for any setting a config layer omits.
     static let `default` = ShellSettings(
-        maxCommandLength: 262_144,
-        maxEnvValueLength: 1024,
-        enableAuditLogging: true,
+        maxCommandLength: defaultMaxCommandLength,
+        maxEnvValueLength: defaultMaxEnvValueLength,
         enableValidation: true)
 }
 
@@ -64,7 +69,6 @@ extension ShellSettings: Decodable {
     enum CodingKeys: String, CodingKey {
         case maxCommandLength = "max_command_length"
         case maxEnvValueLength = "max_env_value_length"
-        case enableAuditLogging = "enable_audit_logging"
         case enableValidation = "enable_validation"
     }
 
@@ -77,9 +81,6 @@ extension ShellSettings: Decodable {
         maxEnvValueLength =
             try container.decodeIfPresent(Int.self, forKey: .maxEnvValueLength)
             ?? fallback.maxEnvValueLength
-        enableAuditLogging =
-            try container.decodeIfPresent(Bool.self, forKey: .enableAuditLogging)
-            ?? fallback.enableAuditLogging
         enableValidation =
             try container.decodeIfPresent(Bool.self, forKey: .enableValidation)
             ?? fallback.enableValidation
@@ -132,7 +133,12 @@ extension ShellSecurityConfig: Decodable {
 ///
 /// Construct once and call the `check(...)` methods per command; each call
 /// reloads the config from disk so overlay edits take effect immediately.
-struct ShellPolicy: Sendable {
+public struct ShellPolicy: Sendable {
+    /// Relative path of a shell config file within each layer's root directory
+    /// (`~` for the user layer, the git root for the project layer). Named once
+    /// so the two default-path helpers cannot drift.
+    private static let shellConfigFileName = ".shell/config.yaml"
+
     /// The user-layer config file (`~/.shell/config.yaml` by default). A `nil`
     /// or missing file contributes nothing.
     let userConfigURL: URL?
@@ -150,7 +156,7 @@ struct ShellPolicy: Sendable {
     ///   - projectConfigURL: project-layer config; defaults to the git root's
     ///     `.shell/config.yaml`, or `nil` when not inside a git working tree.
     ///   - warn: advisory warning sink; defaults to writing to stderr.
-    init(
+    public init(
         userConfigURL: URL? = ShellPolicy.defaultUserConfigURL(),
         projectConfigURL: URL? = ShellPolicy.defaultProjectConfigURL(),
         warn: @escaping @Sendable (String) -> Void = ShellPolicy.stderrWarn
@@ -169,7 +175,7 @@ struct ShellPolicy: Sendable {
     ///
     /// - Returns: `nil` if the command is allowed, otherwise a human-readable
     ///   corrective message carrying the reason it was blocked.
-    func check(command: String) -> String? {
+    public func check(command: String) -> String? {
         let config = loadConfig()
         guard config.settings.enableValidation else { return nil }
 
@@ -200,7 +206,7 @@ struct ShellPolicy: Sendable {
     ///
     /// - Returns: `nil` if every entry is valid, otherwise a corrective message
     ///   for the first offending entry.
-    func check(environment: [String: String]) -> String? {
+    public func check(environment: [String: String]) -> String? {
         let maxLength = loadConfig().settings.maxEnvValueLength
 
         for (name, value) in environment {
@@ -235,7 +241,7 @@ struct ShellPolicy: Sendable {
     ///
     /// - Returns: `nil` if the directory is acceptable, otherwise a corrective
     ///   message.
-    func check(workingDirectory path: String) -> String? {
+    public func check(workingDirectory path: String) -> String? {
         if path.contains("../") {
             return "Working directory rejected: path contains a '..' traversal component: \(path)"
         }
@@ -303,25 +309,25 @@ struct ShellPolicy: Sendable {
     ]
 
     /// The default warning sink: one line per warning to stderr.
-    static let stderrWarn: @Sendable (String) -> Void = { message in
+    public static let stderrWarn: @Sendable (String) -> Void = { message in
         FileHandle.standardError.write(Data("shell policy warning: \(message)\n".utf8))
     }
 
     /// The default user-layer config path, `~/.shell/config.yaml`.
-    static func defaultUserConfigURL() -> URL? {
+    public static func defaultUserConfigURL() -> URL? {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".shell/config.yaml")
+            .appendingPathComponent(shellConfigFileName)
     }
 
     /// The default project-layer config path: the nearest enclosing git working
     /// tree's `.shell/config.yaml`, or `nil` when not inside one.
-    static func defaultProjectConfigURL() -> URL? {
+    public static func defaultProjectConfigURL() -> URL? {
         var directory = URL(
             fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         while true {
             let gitPath = directory.appendingPathComponent(".git").path
             if FileManager.default.fileExists(atPath: gitPath) {
-                return directory.appendingPathComponent(".shell/config.yaml")
+                return directory.appendingPathComponent(shellConfigFileName)
             }
             let parent = directory.deletingLastPathComponent()
             if parent.path == directory.path { return nil }
@@ -331,7 +337,9 @@ struct ShellPolicy: Sendable {
 
     /// sah's exact builtin deny list, embedded at compile time as the
     /// lowest-precedence config layer. Kept byte-faithful to
-    /// `builtin/shell/config.yaml` in the upstream `swissarmyhammer` repo.
+    /// `builtin/shell/config.yaml` in the upstream `swissarmyhammer` repo; the
+    /// numeric limits are interpolated from `ShellSettings`'s shared defaults so
+    /// the builtin config and the code defaults can never drift.
     static let builtinYAML = #"""
         deny:
           # Catastrophic-mistake guards — destructive, low false-positive
@@ -373,8 +381,8 @@ struct ShellPolicy: Sendable {
         permit: []
 
         settings:
-          max_command_length: 262144
-          max_env_value_length: 1024
+          max_command_length: \#(ShellSettings.defaultMaxCommandLength)
+          max_env_value_length: \#(ShellSettings.defaultMaxEnvValueLength)
           enable_audit_logging: true
         """#
 }

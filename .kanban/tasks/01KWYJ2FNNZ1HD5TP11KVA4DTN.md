@@ -25,6 +25,19 @@ comments:
   id: 01kxjymtf6jy5wj3m7wtm10czb
   text: 'Implement landed green in `doing`. Created Package.swift (swift-tools 6.2, .macOS(.v26)), Sources/ShellTool scaffold, Examples/ShellDemo/Sources/shell-demo, Tests/ShellToolTests placeholder (Swift Testing), and .github/workflows/ci.yml (macos-26). Divergence: swift-subprocess is at swiftlang/swift-subprocess (apple/ path 404s), pinned exact 1.0.0-beta.1. `swift package resolve` + `swift build` + `swift test` (1 test passed) all exit 0. Next: /test, checkpoint commit, /review.'
   timestamp: 2026-07-15T13:14:49.190532+00:00
+- actor: claude-code
+  id: 01kxjz7d307ne2ee11faq6ftvz
+  text: |-
+    Pulled back from review to doing to resolve the open review finding.
+
+    Finding: Tests/ShellToolTests/ScaffoldTests.swift trivial `#expect(Bool(true))`.
+
+    Fix: removed the meaningless assertion. The `@testable import ShellTool` at the top is the real compile/link proof (only compiles if the ShellTool library target builds and exposes an importable module). Renamed the test to `moduleImportsCleanlyAndTestTargetRuns()` with an empty body and a doc comment explaining that reaching/running it under `swift test` proves the module imports cleanly and the test target executes — no tautology. The module is still a scaffold comment with no public API, so an API-exercising test intentionally lands with the implementation in later tasks (no fake coverage added).
+
+    Verification: `swift build` exit 0; `swift test` exit 0 — 1 test in 1 suite passed, 0 failures, 0 warnings.
+
+    Finding checklist item flipped to [x]. Leaving task GREEN in doing for the reviewer.
+  timestamp: 2026-07-15T13:24:58.080547+00:00
 position_column: doing
 position_ordinal: '80'
 title: Package scaffolding
@@ -57,3 +70,7 @@ Add `.github/workflows/ci.yml` running `swift build && swift test` on a macOS 26
 
 ## Note
 `swift-subprocess` lives at `https://github.com/swiftlang/swift-subprocess.git`, not `apple/swift-subprocess` (that path 404s — Apple moved it to the swiftlang org). Product name `Subprocess` and package identity `swift-subprocess` are unchanged. See the comment in `Package.swift`.
+
+## Review Findings (2026-07-15 08:18)
+
+- [x] `Tests/ShellToolTests/ScaffoldTests.swift:11` — Trivial assertion `#expect(Bool(true))` that always passes without testing any real functionality. RESOLVED (2026-07-15): dropped the meaningless `#expect(Bool(true))`. The `@testable import ShellTool` at the top is the real compile/link proof; the `@Test moduleImportsCleanlyAndTestTargetRuns()` now has an empty body, so reaching and running it proves the module imports cleanly and the test target executes without a tautological assertion. `swift build` and `swift test` both green (1 test passing, 0 failures/warnings). The `ShellTool` module is still a scaffold comment with no public API, so a real API-exercising test lands with the implementation in the subsequent tasks.

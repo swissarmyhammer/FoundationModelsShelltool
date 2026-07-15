@@ -56,20 +56,20 @@ struct ShellSettings: Sendable, Equatable {
     var maxEnvValueLength: Int
     /// Master switch for command validation. When `false`, `check(command:)`
     /// short-circuits to "allowed" and runs no permit/deny/length checks.
-    var enableValidation: Bool
+    var isValidationEnabled: Bool
 
     /// The in-code defaults, used for any setting a config layer omits.
     static let `default` = ShellSettings(
         maxCommandLength: defaultMaxCommandLength,
         maxEnvValueLength: defaultMaxEnvValueLength,
-        enableValidation: true)
+        isValidationEnabled: true)
 }
 
 extension ShellSettings: Decodable {
     enum CodingKeys: String, CodingKey {
         case maxCommandLength = "max_command_length"
         case maxEnvValueLength = "max_env_value_length"
-        case enableValidation = "enable_validation"
+        case isValidationEnabled = "enable_validation"
     }
 
     init(from decoder: Decoder) throws {
@@ -81,9 +81,9 @@ extension ShellSettings: Decodable {
         maxEnvValueLength =
             try container.decodeIfPresent(Int.self, forKey: .maxEnvValueLength)
             ?? fallback.maxEnvValueLength
-        enableValidation =
-            try container.decodeIfPresent(Bool.self, forKey: .enableValidation)
-            ?? fallback.enableValidation
+        isValidationEnabled =
+            try container.decodeIfPresent(Bool.self, forKey: .isValidationEnabled)
+            ?? fallback.isValidationEnabled
     }
 }
 
@@ -177,7 +177,7 @@ public struct ShellPolicy: Sendable {
     ///   corrective message carrying the reason it was blocked.
     public func check(command: String) -> String? {
         let config = loadConfig()
-        guard config.settings.enableValidation else { return nil }
+        guard config.settings.isValidationEnabled else { return nil }
 
         let length = command.count
         if length > config.settings.maxCommandLength {

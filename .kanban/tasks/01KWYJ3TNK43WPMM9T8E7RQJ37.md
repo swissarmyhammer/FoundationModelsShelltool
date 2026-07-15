@@ -86,6 +86,23 @@ comments:
   id: 01kxkbagxhdps50yxfxqbd64t7
   text: 'Iteration 3: removed dangling `enable_audit_logging: true` from builtinYAML; added a class-level regression guard (BuiltinKeyProbe) that fails if builtinYAML declares any key the decoder ignores. /test green (37 tests, 0 warnings, 0 skipped). Committing checkpoint, then re-reviewing HEAD~1..HEAD.'
   timestamp: 2026-07-15T16:56:23.217637+00:00
+- actor: claude-code
+  id: 01kxkbnwp2fny61m1554b1knhy
+  text: 'Iteration 3 review verdict: prior dangling-key finding verified resolved (regression guard now pins the schema), but 1 NEW finding — Boolean member `enableValidation` should follow Swift assertion naming (`isValidationEnabled`), keeping YAML key stable via CodingKey. Task stayed in `review`. Starting iteration 4: /implement the rename.'
+  timestamp: 2026-07-15T17:02:35.714307+00:00
+- actor: claude-code
+  id: 01kxkd37z6fydhfqb7mc443vvh
+  text: |-
+    Iteration 4 (review finding, 11:57): renamed Boolean member `enableValidation` -> `isValidationEnabled` in ShellPolicy.swift, at all 6 sites: the `var` declaration on `ShellSettings`, the memberwise-init label in `static let default`, the `CodingKeys` case, the decoder block (LHS + `.isValidationEnabled` key + `?? fallback.isValidationEnabled`), and the `check(command:)` guard. YAML key kept stable via explicit CodingKey RHS `case isValidationEnabled = "enable_validation"` — no config-compatibility break. builtinYAML never emitted `enable_validation` (relies on the `?? true` fallback), so nothing there to sync.
+
+    Root-cause sweep for the same class in the changed types (ShellSettings/ShellPolicy): `isValidationEnabled` is the ONLY Bool stored property in either type. Deliberately left alone (already read as assertions, renaming would be wrong per Swift API Design Guidelines): `matches(_:_:)` (verb assertion "rule matches"), `isValidEnvironmentVariableName(_:)` (already `is…`). `isDirectory`/`exists` are locals, not members. `ShellState.grep`'s `literal: Bool` param is a different, out-of-scope type. Zero recurrences of this defect class remain.
+
+    Pure rename preserving the CodingKey — existing tests are the regression guard. `swift test`: 37 tests / 3 suites, 0 failures. `swift build --build-tests`: 0 warnings / 0 errors. Adversarial double-check verdict: PASS. Kept repo's 4-space style; did NOT run the repo-wide swift-format reflow. Finding flipped to [x]. Left in `doing`.
+  timestamp: 2026-07-15T17:27:21.830617+00:00
+- actor: claude-code
+  id: 01kxkd71s96nh27mgpz2atwa2w
+  text: 'Iteration 4: renamed enableValidation → isValidationEnabled at all 6 sites; YAML key preserved via CodingKey `case isValidationEnabled = "enable_validation"`. Sweep confirmed it was the only mis-named Bool member in the changed types. /test re-confirmed green (37 tests, 0 warnings, 0 skipped). Committing checkpoint, then re-reviewing HEAD~1..HEAD.'
+  timestamp: 2026-07-15T17:29:26.569391+00:00
 depends_on:
 - 01KWYJ2FNNZ1HD5TP11KVA4DTN
 position_column: doing
@@ -143,3 +160,7 @@ Additional validation, all returned as corrective messages rather than thrown:
 ## Review Findings (2026-07-15 11:35)
 
 - [x] `Sources/ShellTool/ShellPolicy.swift:407` — The builtin YAML contains `enable_audit_logging: true`, but the `enableAuditLogging` property was removed from `ShellSettings` and is no longer present in the Decodable CodingKeys enum. The setting is now silently ignored by the decoder, creating an inconsistency where the default config advertises a setting the code no longer supports. Remove the `enable_audit_logging: true` line from the builtin YAML so the embedded default config matches the code's actual configuration schema.
+
+## Review Findings (2026-07-15 11:57)
+
+- [x] `Sources/ShellTool/ShellPolicy.swift:61` — Boolean property `enableValidation` does not follow Swift naming conventions for non-mutating Boolean members. Such properties should read as assertions about the receiver using patterns like `is<Adjective>`, `has<Noun>`, or action verbs. The name `enableValidation` reads as a command or configuration parameter, not an assertion about the receiver's state. Rename `enableValidation` to `isValidationEnabled`. Update the corresponding CodingKey case to `case isValidationEnabled = "enable_validation"` to maintain stable YAML compatibility, and update all usages throughout ShellSettings and ShellPolicy.

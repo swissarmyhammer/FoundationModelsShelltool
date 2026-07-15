@@ -1,7 +1,77 @@
-// `ShellTool` — the FoundationModels shell tool library.
+// `ShellTool` — the fused FoundationModels shell tool.
 //
-// This file is the scaffold placeholder that establishes the `ShellTool`
-// module so the package builds and the test target can `@testable import` it.
-// The real contents — the shell operations, `ShellContext`, `ShellState`,
-// `ShellRunner`, `OutputBuffer`, `ShellPolicy`, and the output types — land in
-// the subsequent tasks and replace this comment.
+// Fuses the five shell operations — `ExecuteCommand`, `ListProcesses`,
+// `KillProcess`, `GrepHistory`, `GetLines` — into a single
+// `OperationTool<ShellContext>` via `make(context:)`, the direct analogue of
+// the upstream `NotesTool.make()` worked example. It is the library's entry
+// point: a caller builds a `ShellContext`, calls `make(context:)`, and drops
+// the returned tool into a `LanguageModelSession(tools:)` list (or an
+// `OperationCLIDriver`).
+//
+// The tool's name and description match the Rust `swissarmyhammer-tools`
+// `ShellExecuteTool` verbatim, and the empty-`op` default (`""` → `execute
+// command` in the Rust dispatch `match`) is expressed through the upstream
+// resolver's opt-in `inferOp` inference hook rather than any hand-rolled
+// wiring. Per-op requiredness, snake_case/camelCase key normalization, and the
+// flat-union schema all come from the upstream `OperationTool`/
+// `OperationResolver`/`SchemaFusion` machinery.
+
+import FoundationModels
+import Operations
+
+/// The fused `shell` `OperationTool`'s public factory and shared naming — the
+/// full-stack analogue of the upstream `NotesTool`: the five `@Operation`
+/// operations fused by `OperationTool` and driven by both an
+/// `OperationCLIDriver` and a `LanguageModelSession`.
+public enum ShellTool {
+    /// The fused tool's model- and CLI-facing name. Parity with the Rust
+    /// `ShellExecuteTool::name`.
+    public static let name = "shell"
+
+    /// A human- and model-facing summary of the fused tool, byte-identical to
+    /// the Rust `ShellExecuteTool::description`.
+    public static let description =
+        "Virtual shell with history and process management. Execute commands, grep output history, and manage running processes."
+
+    /// Builds the fused `shell` tool over `context`.
+    ///
+    /// Fuses the five operations — `execute command`, `list processes`, `kill
+    /// process`, `grep history`, `get lines` — into one
+    /// `OperationTool<ShellContext>`, sharing `context` so every op reads and
+    /// records into the same `ShellState`. The resolver is given an `inferOp`
+    /// hook returning `"execute command"`, so a payload that omits `op`
+    /// entirely resolves to the execute-command operation — the upstream
+    /// expression of the Rust dispatch's `"execute command" | "" =>` empty-op
+    /// default.
+    ///
+    /// Exposed as a factory rather than a stored singleton because
+    /// `OperationTool.init` throws, and because each `ShellContext` carries a
+    /// distinct `ShellState` (its own `.shell/log` store) the caller owns and
+    /// supplies.
+    ///
+    /// - Parameter context: The shared environment every operation's
+    ///   `execute(in:)` runs against — the `ShellState`, `ShellRunner`, and
+    ///   `ShellPolicy` the caller assembled.
+    /// - Returns: The fused tool, ready to drive both an `OperationCLIDriver`
+    ///   and a `LanguageModelSession`.
+    /// - Throws: `SchemaFusionError.reservedParameterName` if the fused schema
+    ///   collides with the `op` discriminator (not expected for this fixed
+    ///   operation set, but propagated per `OperationTool.init`'s contract);
+    ///   rethrows `GenerationSchema.SchemaError` on any other schema-fusion
+    ///   failure.
+    public static func make(context: ShellContext) throws -> OperationTool<ShellContext> {
+        try OperationTool(
+            name: name,
+            description: description,
+            context: context,
+            operations: [
+                AnyOperation(ExecuteCommand.self),
+                AnyOperation(ListProcesses.self),
+                AnyOperation(KillProcess.self),
+                AnyOperation(GrepHistory.self),
+                AnyOperation(GetLines.self),
+            ],
+            resolver: OperationResolver(inferOp: { _ in ExecuteCommand.opString })
+        )
+    }
+}

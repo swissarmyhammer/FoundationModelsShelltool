@@ -18,8 +18,8 @@ comments:
   timestamp: 2026-07-15T22:06:06.831251+00:00
 depends_on:
 - 01KWYJ9XPG0K9VNSXCM66H3H2K
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8680'
 title: GrepHistory + GetLines ops
 ---
 ## What

@@ -19,6 +19,28 @@ comments:
 
     Justification for NOT fixing the reviewer's other (advisory) sub-points — public-protocol requirements and `public extension` members with inherited access: these carry no explicit `public` modifier and would be missed, BUT the module has zero public protocols and zero public extensions, and the mirrored upstream DocCoverageVisitor omits them too. Adding that handling now would be speculative generalization with no instance to serve (rule-of-three: no occurrence). Left as a known, documented limitation rather than untested code. The concrete, real-type gap (actor) is closed.
   timestamp: 2026-07-16T01:58:36.465421+00:00
+- actor: claude-code
+  id: 01kxmax0acnrxx22rsg7fzvbz1
+  text: 'Iteration 1 review (complete pass, 14/14): 3 findings (21:01), all in the new test files (new code, not pre-existing tests): (1)&(2) `packageRoot()` duplicated between DocCoverageTests.swift:224 and ReadmeSnippetTests.swift:96 → consolidate into the shared PackageRootValidation.swift (already exists); (3) ReadmeSnippetTests.swift:157 doc-snippet parser validates the opening marker + code fences but never the closing marker `<!-- /doc-snippet -->` → skip malformed blocks or raise, to match the docstring contract. Task stayed in `review`. Starting implement iteration.'
+  timestamp: 2026-07-16T02:08:14.668656+00:00
+- actor: claude-code
+  id: 01kxmb519bgxp2e7d24v88fp29
+  text: |-
+    Pulled back review→doing to work the 3 review findings (21:01).
+
+    Finding 1&2 (packageRoot duplication): Consolidated the identical `packageRoot()` helper into `PackageRootValidation.swift` as `static func packageRoot(thisFile: String = #filePath) -> URL`. Removed both local copies (DocCoverageScanner.packageRoot and ReadmeSnippetTests.packageRoot); both call sites now use `PackageRootValidation.packageRoot()`. `#filePath` default expands at the call site, and all test files live in Tests/ShellToolTests/, so the three-levels-up derivation is identical regardless of caller (documented in the shared helper's docstring). Grep `func packageRoot` under Tests/ now returns exactly ONE definition. Swept the other test files for other identically-duplicated helpers of this kind: only packageRoot() was cross-file duplicated (ExampleIntegrationTests uses a distinct bundle-based executable-discovery mechanism, not the same helper; fileContents/sourceFileLines exist only in ReadmeSnippetTests). Zero remaining duplication.
+
+    Finding 3 (closing-marker validation): Fixed `ReadmeSnippets.parse` to validate the closing `<!-- /doc-snippet -->` marker after the closing fence — malformed blocks (missing/wrong closing marker) are now skipped, matching the docstring "Malformed blocks … are skipped" contract; updated the docstring to name this case. TDD: added `Tests/ShellToolTests/ReadmeSnippetsParserTests.swift` (mirrors DocCoverageScannerTests convention) with fixture tests — watched 3 teeth tests fail RED against the old parser (block missing closing marker / wrong closing marker / well-formed-after-malformed all wrongly accepted), then GREEN after the fix. All 5 README blocks carry exact closing markers so the real-README integration test stays green.
+
+    Evidence: swift build clean (0 warnings/errors, grep-verified), swift test = 140 tests / 15 suites / 0 failures (up from 135; +5 new parser tests). Running adversarial double-check.
+  timestamp: 2026-07-16T02:12:37.803167+00:00
+- actor: claude-code
+  id: 01kxmb9pa0bmcs0ccxvs50e54y
+  text: |-
+    Adversarial double-check: PASS. Verified by reading files, tracing the parse loop, comparing against the OLD parser at HEAD, and running suites fresh: (1) `func packageRoot` exists in exactly ONE place (PackageRootValidation.swift); no other identically-duplicated helper of this kind across the test files (the other deletingLastPathComponent hits — ShellStateTests log-dir parent, ExampleIntegrationTests bundle-URL sibling — are unrelated). (2) `#filePath` call-site expansion is sound for all current callers (all in Tests/ShellToolTests/). (3) closing-marker guard has no off-by-one/OOB — every lines[index] access is guarded by index<count and index advances ≥1 per path; real README safe (5 opening markers, 5 exact whole-line closing markers, no trailing whitespace). (4) new tests genuinely fail against the old parser; happy-path asserts concrete sourcePath+code, not tautological.
+
+    All 3 review-finding checkboxes flipped to [x]. Leaving task in `doing` for /review. Not moving to review.
+  timestamp: 2026-07-16T02:15:10.400583+00:00
 depends_on:
 - 01KWYJ55X4ESPSXZ8AR2DFM3KB
 position_column: doing
@@ -47,3 +69,9 @@ Write `README.md` (declare → fuse → session → CLI, library-style, with a r
 
 ## Workflow
 - Use `/tdd` for the doc-snippet test; docs themselves are written directly, not test-driven.
+
+## Review Findings (2026-07-15 21:01)
+
+- [x] `Tests/ShellToolTests/DocCoverageTests.swift:224` — The `packageRoot()` function is reimplemented identically in ReadmeSnippetTests.swift. Both files need to resolve the package root from their test file path, yet each defines the same logic separately. Extract `packageRoot()` to the shared `PackageRootValidation.swift` module (which already serves as a home for path-related test utilities). Both test files can then call a shared implementation, reducing duplication and ensuring consistency.
+- [x] `Tests/ShellToolTests/ReadmeSnippetTests.swift:96` — The `packageRoot()` function is reimplemented identically in DocCoverageTests.swift. Both files need to resolve the package root from their test file path, yet each defines the same logic separately. Extract `packageRoot()` to the shared `PackageRootValidation.swift` module (which already serves as a home for path-related test utilities). Both test files can then call a shared implementation, reducing duplication and ensuring consistency.
+- [x] `Tests/ShellToolTests/ReadmeSnippetTests.swift:157` — The docstring specifies that a well-formed block has both an opening marker `<!-- doc-snippet source="PATH" -->` and a closing marker `<!-- /doc-snippet -->`. The opening marker is validated via `sourcePath()`, and code fences are validated, but the closing marker is never validated. Blocks without closing markers are silently accepted, creating an inconsistency between the stated format specification and the parsing implementation. After line 155 (incrementing past the closing fence), validate that the next line is `<!-- /doc-snippet -->` before accepting the snippet. If the closing marker is absent, either skip the block (consistent with 'Malformed blocks … are skipped') or raise an error to enforce the documented format.

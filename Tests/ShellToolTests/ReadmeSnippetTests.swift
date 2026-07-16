@@ -60,11 +60,11 @@ struct ReadmeSnippetTests {
     }
 
     private func fileContents(relativePath: String) throws -> String {
-        try String(contentsOf: packageRoot().appendingPathComponent(relativePath), encoding: .utf8)
+        try String(contentsOf: PackageRootValidation.packageRoot().appendingPathComponent(relativePath), encoding: .utf8)
     }
 
     private func sourceFileLines(relativePath: String) throws -> [String] {
-        let root = packageRoot()
+        let root = PackageRootValidation.packageRoot()
         let fileURL = root.appendingPathComponent(relativePath)
         try PackageRootValidation.requireWithinPackageRoot(fileURL, root: root) {
             PathEscapesPackageRoot(path: $0)
@@ -78,15 +78,6 @@ struct ReadmeSnippetTests {
     private struct PathEscapesPackageRoot: Error, CustomStringConvertible {
         let path: String
         var description: String { "'\(path)' resolves outside the package root" }
-    }
-
-    /// The package root directory, derived from this file's own path: three
-    /// levels up from `Tests/ShellToolTests/ReadmeSnippetTests.swift`.
-    private func packageRoot(thisFile: String = #filePath) -> URL {
-        URL(fileURLWithPath: thisFile)
-            .deletingLastPathComponent()  // ReadmeSnippetTests.swift -> ShellToolTests/
-            .deletingLastPathComponent()  // ShellToolTests/ -> Tests/
-            .deletingLastPathComponent()  // Tests/ -> package root
     }
 }
 
@@ -108,7 +99,8 @@ enum ReadmeSnippets {
     ///
     /// A block is: a `<!-- doc-snippet source="PATH" -->` line, a fenced code
     /// block (` ``` ` … ` ``` `), then a `<!-- /doc-snippet -->` line.
-    /// Malformed blocks (a marker with no following fence) are skipped.
+    /// Malformed blocks — a marker with no following fence, or a fence with no
+    /// following `<!-- /doc-snippet -->` closing marker — are skipped.
     static func parse(_ readme: String) throws -> [Snippet] {
         let lines = readme.components(separatedBy: "\n")
         var snippets: [Snippet] = []
@@ -132,6 +124,10 @@ enum ReadmeSnippets {
                 index += 1
             }
             index += 1  // past the closing fence
+            guard index < lines.count, lines[index] == "<!-- /doc-snippet -->" else {
+                continue
+            }
+            index += 1  // past the closing marker
 
             snippets.append(Snippet(sourcePath: sourcePath, code: codeLines.joined(separator: "\n")))
         }

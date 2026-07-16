@@ -78,7 +78,7 @@ enum DocCoverageScanner {
     ///   directory cannot be listed, or a `.swift` file within it cannot be read
     ///   as UTF-8.
     static func scan(directory: String) throws -> [Violation] {
-        let root = packageRoot()
+        let root = PackageRootValidation.packageRoot()
         let directoryURL = root.appendingPathComponent(directory)
         try PackageRootValidation.requireWithinPackageRoot(directoryURL, root: root) {
             ScanError.pathEscapesPackageRoot($0)
@@ -106,15 +106,6 @@ enum DocCoverageScanner {
         let visitor = DocCoverageVisitor(filePath: filePath, tree: tree)
         visitor.walk(tree)
         return visitor.violations
-    }
-
-    /// The package root directory, derived from this file's own path: three
-    /// levels up from `Tests/ShellToolTests/DocCoverageTests.swift`.
-    private static func packageRoot(thisFile: String = #filePath) -> URL {
-        URL(fileURLWithPath: thisFile)
-            .deletingLastPathComponent()  // DocCoverageTests.swift -> ShellToolTests/
-            .deletingLastPathComponent()  // ShellToolTests/ -> Tests/
-            .deletingLastPathComponent()  // Tests/ -> package root
     }
 }
 

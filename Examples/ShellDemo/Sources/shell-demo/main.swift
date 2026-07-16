@@ -24,8 +24,6 @@
 // the mode, building the tool for the CLI path, printing the driver's output,
 // and propagating its exit code.
 
-import Foundation
-
 /// The `shell-demo` executable's entry point: dispatches to `--chat` or
 /// `--script` mode, or the default CLI mode, based on the first argument.
 @main
@@ -34,9 +32,6 @@ enum ShellDemoMain {
     private static let chatFlag = "--chat"
     /// The flag selecting the stdin batch driver.
     private static let scriptFlag = "--script"
-
-    /// The name shown in usage/help text and error prefixes.
-    private static let executableName = "shell-demo"
 
     /// Dispatches to `--chat`, `--script`, or the default CLI mode, based on
     /// `CommandLine.arguments`.
@@ -63,18 +58,12 @@ enum ShellDemoMain {
     /// - Parameter arguments: The command's arguments, excluding the executable
     ///   name.
     private static func runCLI(arguments: [String]) async {
-        do {
-            let driver = try ShellDemoDriver.make(executableName: executableName)
+        await ShellDemoDriver.run { driver in
             let result = await driver.run(arguments: arguments)
             if !result.output.isEmpty {
                 print(result.output)
             }
-            if result.exitCode != 0 {
-                exit(result.exitCode)
-            }
-        } catch {
-            FileHandle.standardError.write(Data("\(executableName): \(error)\n".utf8))
-            exit(1)
+            return result.exitCode
         }
     }
 }

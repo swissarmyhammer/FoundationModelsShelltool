@@ -19,9 +19,6 @@ import OperationsCLI
 /// The `shell-demo --script` batch driver: run stdin op lines against one
 /// shared session.
 enum ScriptMode {
-    /// The name shown in the driver's usage/help text and error prefixes.
-    private static let executableName = "shell-demo"
-
     /// Build the shared tool and driver, then run every op line read from
     /// standard input against them, printing each line's output.
     ///
@@ -29,16 +26,9 @@ enum ScriptMode {
     /// parse — the same exit-code contract the default CLI mode honors,
     /// aggregated across the whole script.
     static func run() async {
-        do {
-            let driver = try ShellDemoDriver.make(executableName: executableName)
+        await ShellDemoDriver.run { driver in
             let input = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
-            let exitCode = await run(input: input, driver: driver) { print($0) }
-            if exitCode != 0 {
-                exit(exitCode)
-            }
-        } catch {
-            FileHandle.standardError.write(Data("\(executableName): \(error)\n".utf8))
-            exit(1)
+            return await run(input: input, driver: driver) { print($0) }
         }
     }
 

@@ -145,6 +145,46 @@ comments:
 
     Leaving task in `doing` per /implement (not moving to review).
   timestamp: 2026-07-16T01:19:06.162861+00:00
+- actor: claude-code
+  id: 01kxm8mmpg6drdpj8jwzjxgwx6
+  text: 'Iteration 6 review (complete pass, 14/14): prior driver-construction dedup resolved (refuted:2). 3 NEW findings (20:22), one cause — the `"shell-demo"` executableName constant is still declared independently in both main.swift:39 and ScriptMode.swift:23 (the construction dedup left the name behind); hoist it to `ShellDemoDriver.executableName` as the single source. Distinct from prior rounds, not a guardrail recurrence. Dispatching a fix that hoists the name AND sweeps for any other shared entry-point config duplicated across main.swift/ScriptMode.swift, to stop the adjacent-duplication trickle and converge.'
+  timestamp: 2026-07-16T01:28:43.472800+00:00
+- actor: claude-code
+  id: 01kxm909qz8rn7sn8ycsjjx1cc
+  text: |-
+    Iteration 7 (implement): pulled from review back to doing to work the 3 findings (20:22), one shared cause — the `"shell-demo"` name still declared independently in main.swift:39 and ScriptMode.swift:23. All 3 checkboxes flipped to [x].
+
+    ROOT FIX (hoist the name, single source of truth):
+    - ShellDemoDriver.swift now owns `static let executableName = "shell-demo"` — the ONLY "shell-demo" literal in the whole example.
+    - `make(executableName:)` -> `make()`; it uses `ShellDemoDriver.executableName` internally, so call sites no longer pass the name (cleanest single-source form the task asked for).
+    - main.swift and ScriptMode.swift: removed both local `executableName` constants entirely.
+
+    FINAL DUPLICATION SWEEP (task's explicit "stop the trickle" mandate) — consolidated the remaining parallel construction across the two entry points, not just the cited name:
+    - Both catch blocks were BYTE-IDENTICAL (`FileHandle.standardError.write(Data("\(executableName): \(error)\n".utf8))` + `exit(1)`), and the do/make/exit-guard wrapper was structurally parallel. Extracted the whole failure/exit skeleton into `ShellDemoDriver.run(_ body: (OperationCLIDriver) async throws -> Int32) async`: it builds the driver once, runs the mode body, exits with a non-zero returned code, and on throw writes the `shell-demo: <error>` stderr line + exit(1). Both entry points now keep ONLY their mode-specific body:
+      - main.swift runCLI: `await ShellDemoDriver.run { driver in ...print output...; return result.exitCode }`
+      - ScriptMode.run: `await ShellDemoDriver.run { driver in ...read stdin...; return await run(input:driver:emit:) }`
+    - Import cleanup (consequence of the extraction): main.swift no longer references Foundation (CommandLine is stdlib) -> dropped `import Foundation`. ScriptMode keeps Foundation (FileHandle) + OperationsCLI (OperationCLIDriver param type). ShellDemoDriver gained `import Foundation` (FileHandle/Data/exit).
+
+    Behavior preserved EXACTLY: same "shell-demo" at every site; same ShellTool.make() default ShellContext rooted at <cwd>/.shell; same exit-code contract (0 falls through, non-zero exits with the code, corrective-message runs still exit 0 because print-then-check order is preserved); same error propagation (`shell-demo: <error>` to stderr + exit 1).
+
+    Per-file sweep result (re-review should find ZERO duplication of any kind):
+    - ShellDemoDriver.swift — SINGLE home for the name, the sole `OperationCLIDriver(...)` construction, the sole `standardError.write` error format, and the sole `exit(...)` calls.
+    - main.swift — zero "shell-demo"/executableName/standardError.write/exit/OperationCLIDriver; only its two dispatch flags (single-use each) + thin runCLI delegating to ShellDemoDriver.run.
+    - ScriptMode.swift — same; only mode-unique run(input:driver:emit:) + tokenize remain.
+    - ChatValidationHarness.swift — untouched; separate composition (LanguageModelSession), shares only ShellTool.make() (the intended example-wide factory the task says --chat should build directly). No name/flag/driver/exit duplication with the CLI entry points.
+    No single-use constants introduced; `run(_:)` has two real call sites.
+
+    really-done: verification commands green — `swift build` exit 0, clean (no warnings); `swift test` = 117 tests / 11 suites / 0 failures / 0 warnings. The --script subprocess tests and CLIConvergence tests exercise both refactored call paths end-to-end. No swift-format reflow; 4-space style preserved. Pure refactor -> existing subprocess tests are the safety net (TDD pure-refactor exemption).
+
+    Leaving task in `doing` per /implement (not moving to review). Adversarial double-check dispatched; result to follow.
+  timestamp: 2026-07-16T01:35:05.471382+00:00
+- actor: claude-code
+  id: 01kxm92jkwpxyjytss39ygktt6
+  text: |-
+    Adversarial double-check: PASS, no findings. Independently confirmed via git diff: only the three code files changed (ChatValidationHarness.swift untouched); "shell-demo" literal now appears exactly once (ShellDemoDriver.executableName); print-then-exit order preserved in runCLI so corrective-message runs still exit 0; ScriptMode.run() closure binds run(input:driver:emit:) with no accidental recursion; error format/prefix identical (`shell-demo: <error>` + exit 1); import removal from main.swift safe (CommandLine is stdlib); executableName used at two sites (not single-use). Re-ran fresh: `swift build` exit 0 no warnings; `swift test` 117 tests / 11 suites / 0 failures / 0 warnings.
+
+    Task remains in `doing`, ready for /review.
+  timestamp: 2026-07-16T01:36:20.092185+00:00
 depends_on:
 - 01KWYJAWZQ8PN9031D9FCWG2N8
 - 01KWYJ4QGVWPQ349JDZCWDYVAY
@@ -196,3 +236,9 @@ Complete the `shell-demo` executable (`Examples/ShellDemo/Sources/shell-demo/`) 
 
 - [x] `Examples/ShellDemo/Sources/shell-demo/ScriptMode.swift:34` — Driver construction is duplicated across entry points. The identical OperationCLIDriver initialization with ShellTool.make() and executableName appears in both ScriptMode.run() and main.swift's runCLI(), creating parallel implementations where a shared helper function would eliminate duplication. Extract driver construction into a shared helper function (e.g., `makeDriver(executableName:)`) that both entry points call, eliminating the duplicated initialization logic.
 - [x] `Examples/ShellDemo/Sources/shell-demo/main.swift:69` — Driver construction is duplicated across entry points. The identical OperationCLIDriver initialization with ShellTool.make() and executableName appears in both ScriptMode.run() and main.swift's runCLI(), creating parallel implementations where a shared helper function would eliminate duplication. Extract driver construction into a shared helper function (e.g., `makeDriver(executableName:)`) that both entry points call, eliminating the duplicated initialization logic.
+
+## Review Findings (2026-07-15 20:22)
+
+- [x] `Examples/ShellDemo/Sources/shell-demo/ScriptMode.swift:23` — The executable name "shell-demo" is defined as a private static constant here and duplicated identically in main.swift:39. This cross-file repeated configuration value should be expressed once as shared data, so changes need only be made in one place and the two code paths cannot drift. Extract the executable name to a shared, accessible constant (e.g., a module-level definition) that both ScriptMode and main reference, ensuring the configuration is maintained in a single place.
+- [x] `Examples/ShellDemo/Sources/shell-demo/main.swift:39` — The executable name "shell-demo" is defined as a private static constant here and duplicated identically in ScriptMode.swift:23. This cross-file repeated configuration value should be expressed once as shared data, so changes need only be made in one place and the two code paths cannot drift. Extract the executable name to a shared, accessible constant (e.g., a module-level definition) that both ScriptMode and main reference, ensuring the configuration is maintained in a single place.
+- [x] `Examples/ShellDemo/Sources/shell-demo/main.swift:39` — The executableName constant is duplicated identically in ScriptMode.swift; both define "shell-demo" separately, creating a maintenance hazard where the name must change in two places if ever updated. Move executableName to ShellDemoDriver as a static constant, then reference it from both ScriptMode and ShellDemoMain (e.g., `ShellDemoDriver.executableName`) to eliminate the duplicate and unify the two entry points' identity.

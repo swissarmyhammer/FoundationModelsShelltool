@@ -336,10 +336,13 @@ public struct ShellPolicy: Sendable {
     }
 
     /// sah's exact builtin deny list, embedded at compile time as the
-    /// lowest-precedence config layer. Kept byte-faithful to
-    /// `builtin/shell/config.yaml` in the upstream `swissarmyhammer` repo; the
-    /// numeric limits are interpolated from `ShellSettings`'s shared defaults so
-    /// the builtin config and the code defaults can never drift.
+    /// lowest-precedence config layer. The deny list is ported verbatim from
+    /// `builtin/shell/config.yaml` in the upstream `swissarmyhammer` repo, but
+    /// the embedded config as a whole is a faithful *subset*, not byte-identical:
+    /// the numeric limits are interpolated from `ShellSettings`'s shared defaults
+    /// (so the builtin config and the code defaults can never drift), and the
+    /// dead-config keys `enable_audit_logging` and `max_line_length` are dropped.
+    /// See `DESIGN_NOTES.md` entries 10 and 4.
     static let builtinYAML = #"""
         deny:
           # Catastrophic-mistake guards — destructive, low false-positive

@@ -1,8 +1,25 @@
 ---
 assignees:
 - claude-code
-position_column: todo
-position_ordinal: '8180'
+comments:
+- actor: claude-code
+  id: 01kxnfwjbb5etwtncwa7ev44vn
+  text: 'Picked up by /finish (scoped-batch) after grep-fix ^aaprkw8 landed done. Starting iteration 1: /implement. Doc-only + one presence test: add DESIGN_NOTES.md entries 8–12 (batch-at-exit log append; post-stream group-kill races EOF; audit-logging not ported / builtin YAML differs from sah; public API is ShellTool.make(preferredDirectory:); ExecuteResult.exitCode non-optional Int), matching the §8 entry style; entry 8 cross-refs the KillProcess doc comment; entry 10 states the builtin YAML divergence. New DesignNotesTests.swift presence test; keep ReadmeSnippetTests + DocCoverageTests green. TDD per task.'
+  timestamp: 2026-07-16T12:54:37.675103+00:00
+- actor: claude-code
+  id: 01kxng34h6k4rppsr63am78jfv
+  text: 'Implementation landed. TDD: wrote Tests/ShellToolTests/DesignNotesTests.swift FIRST (presence test asserting one distinctive phrase per entry 8-12: "Batch-at-exit", "races stream EOF", "Audit logging", "preferredDirectory", "non-optional `Int`"), watched it fail RED (5 issues, phrases absent). Then added `## Departures discovered during implementation` section (entries 8-12) to DESIGN_NOTES.md matching the §8 entry style; entry 8 cross-refs the KillResult.linesCaptured doc comment in KillProcess.swift; entry 10 explicitly states the builtin YAML is no longer byte-identical to sah''s builtin/shell/config.yaml. Entries 1-7 and Further reading unchanged. Verified each entry''s claim against source (ShellRunner.swift defer killpg + collector.finish→appendLines; ShellPolicy.swift builtinYAML has no enable_audit_logging; ShellTool.make(preferredDirectory:); ExecuteResult.exitCode non-optional Int backfilled via record?.exitCode ?? outcome.exitCode). Test now GREEN. Full `swift test`: 148 tests / 16 suites pass, exit 0, 0 warnings, including ReadmeSnippetTests and DocCoverageTests. Reused shared PackageRootValidation.packageRoot() helper rather than duplicating.'
+  timestamp: 2026-07-16T12:58:12.902475+00:00
+- actor: claude-code
+  id: 01kxnge71c64zv2tfhw435aepw
+  text: 'Adversarial double-check returned REVISE (3 findings); all fixed. (1) Medium — entry 12 wrongly said a "killed OR timed-out" record stores exitCode nil. Verified against source: only the KILLED path stores nil (ShellState.killProcess → completeCommand(exitCode: nil)); the TIMEOUT path stores -1 directly (ShellRunner → completeIfRunning(status: .timedOut, exitCode: -1); CommandRecord.exitCode field doc says "-1 on timeout"). Reworded entry 12 to scope the nil+backfill to killed only and state timed-out already stores -1. (2) Low — the surviving ShellPolicy.swift builtinYAML doc comment still claimed "Kept byte-faithful", contradicting new entry 10. Reconciled that comment to say the deny list is verbatim but the embedded config is a faithful *subset* (numeric limits interpolated; enable_audit_logging + max_line_length dropped), cross-referencing DESIGN_NOTES entries 10 and 4. README has no doc-snippet citing ShellPolicy.swift, so ReadmeSnippetTests unaffected. (3) Nit — entry 9 now quotes `defer { _ = killpg(pid, SIGKILL) }` verbatim. Re-ran full suite after the source edit: 148 tests / 16 suites pass, exit 0, 0 build warnings, DocCoverageTests + ReadmeSnippetTests + ShellPolicyTests + DesignNotesTests all green.'
+  timestamp: 2026-07-16T13:04:15.916077+00:00
+- actor: claude-code
+  id: 01kxnghm6bwndp8aft0xmgzx91
+  text: 'really-done: PASS. Confirmatory adversarial double-check verified all three fixes correct against source with no regressions (entries 1-7 and Further reading untouched; all five presence-test phrases present verbatim). Final verification: `swift test` → 148 tests / 16 suites pass, exit 0, 0 build warnings. Work complete and green; leaving task in `doing` for /review.'
+  timestamp: 2026-07-16T13:06:07.691129+00:00
+position_column: doing
+position_ordinal: '80'
 title: Record undocumented shipped departures in DESIGN_NOTES.md
 ---
 ## What

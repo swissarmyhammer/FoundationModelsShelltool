@@ -82,8 +82,8 @@ comments:
 
     Verified: `swift test` → 147 tests in 15 suites passed (was 146), 0 failures. `swift build --build-tests` → 0 warnings, 0 errors. No stray subprocesses (pgrep sleep clean). Kept 4-space style; no repo-wide swift-format reflow. Finding checkbox flipped to [x]. Task left in doing for /review.
   timestamp: 2026-07-16T12:46:29.834932+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 8b80
 title: Fix grep matching against log-line metadata prefix
 ---
 ## What

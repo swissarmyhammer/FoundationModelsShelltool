@@ -90,6 +90,80 @@ to fuse the five operations and supply the `inferOp` hook for the empty-op defau
 dispatch's `"execute command" | "" =>`). See `Sources/ShellTool/ShellTool.swift` and the
 sibling package's `DESIGN_NOTES.md` for the fusion machinery's own design rationale.
 
+## Departures discovered during implementation
+
+The §8 entries above were decided during planning. The five below were found by a
+plan-deviation audit *after* implementation — shipped behaviors that depart from
+the plan (§3/§4/§8) or from the Rust tool but were not recorded when they were
+made. They are captured here so the plan's "deliberate departures are few and
+recorded" principle holds for the shipped code, not just the design.
+
+### 8. Batch-at-exit log append
+
+`ShellRunner` collects a command's output in an `OutputCollector` and calls
+`ShellState.appendLines` **once**, after both the stdout and stderr streams have
+closed (the `collector.finish()` → `appendLines` sequence in
+`Sources/ShellTool/ShellRunner.swift`), rather than streaming each line into the
+log incrementally as the plan's "stream stdout+stderr into the log" wording and
+the Rust guard do. Batching at exit keeps the shared per-command line counter
+free of a concurrent-write race between the two stream readers, at the cost of
+one property: a command killed *mid-stream* has recorded no lines yet, so
+`KillResult.linesCaptured` is `0`. That consequence is already called out in the
+`KillResult.linesCaptured` doc comment in
+`Sources/ShellTool/Operations/KillProcess.swift`; this entry is the design-level
+cross-reference for it.
+
+### 9. Post-stream group-kill / timeout races stream EOF
+
+`ShellRunner.run` races the optional timeout timer against *stream EOF* — the
+body's task group finishes as soon as both the stdout and stderr readers reach
+end of stream — and an unconditional `defer { _ = killpg(pid, SIGKILL) }` fires the
+moment the body exits. The plan (and the Rust guard) instead wait on the *child
+process itself*. The observable difference: a command that closes or redirects
+its own stdout and stderr but keeps running (e.g. `exec >/dev/null 2>&1; sleep
+100`) reaches stream EOF immediately, so the body exits, the `defer` SIGKILLs the
+group, and the command is reported `completed` with exit `-1` — **not**
+`timed_out`. The rationale is deliberate: the unconditional group-kill guarantees
+no backgrounded grandchild leaks as a daemon, and swift-subprocess's own child
+reap cannot complete until the pipes are closed, so the runner must close them by
+killing the group on every exit path. See `run(_:)` in
+`Sources/ShellTool/ShellRunner.swift`.
+
+### 10. Audit logging not ported
+
+The Rust `builtin/shell/config.yaml` carries an `enable_audit_logging` setting. It
+is removed here as dead code — nothing in this port consumes it — and the line is
+stripped from the embedded builtin YAML in `Sources/ShellTool/ShellPolicy.swift`.
+As a result the embedded builtin config is **no longer byte-identical** to sah's
+`builtin/shell/config.yaml`: it drops the `enable_audit_logging` line (and, per §4
+above, `max_line_length`). This narrows the plan §5.6 "security layer ported
+whole" claim — the deny/permit list and the enforced scalar limits are ported
+faithfully, but the builtin config file is a faithful *subset*, not a
+byte-for-byte copy.
+
+### 11. Public API is `ShellTool.make(preferredDirectory:)`, not `ShellContext(state:policy:)`
+
+Plan §4 sketched an embedder constructing a `ShellContext(state:policy:)`
+directly. As shipped, `ShellContext` and `ShellState` are module-internal and
+cannot be built from outside the module, so that snippet cannot compile for an
+embedder. The public surface is instead the factory
+`ShellTool.make(preferredDirectory:)` in `Sources/ShellTool/ShellTool.swift`,
+which assembles the internal context itself — the one `preferredDirectory`
+parameter lets a caller point the `.shell` store somewhere other than the working
+directory. `make(context:)` remains available for `@testable` callers.
+
+### 12. `ExecuteResult.exitCode` is non-optional `Int`
+
+Plan §3 spelled the exit code as `Int?`. The shipped `ExecuteResult.exitCode` in
+`Sources/ShellTool/Operations/ExecuteCommand.swift` is a non-optional `Int`: a
+*killed* record has a stored exit code of `nil` (`ShellState.killProcess` →
+`completeCommand(exitCode: nil)`), which the result assembly backfills to `-1`
+via `record?.exitCode ?? outcome.exitCode`; a *timed-out* record already stores
+`-1` directly (the runner's timeout path calls `completeIfRunning(exitCode:
+-1)`). Either way the model always sees a concrete integer, with `-1` as the
+sentinel for "died by signal or timeout" — matching the Rust tool's own
+exit-code convention.
+
 ## Further reading
 
 - [`README.md`](README.md) — declaring an operation, fusing the tool, registering it on a

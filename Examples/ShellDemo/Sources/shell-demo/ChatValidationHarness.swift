@@ -86,6 +86,14 @@ enum ChatValidationHarness {
     /// `availabilityReasonMessages`.
     private static let unknownAvailabilityReasonText = "unknown reason"
 
+    /// The shared suffix of the skip messages `run()` prints when the model is
+    /// unavailable, so the phrasing lives in one place across both paths.
+    private static let skipValidationMessage = "skipping live validation."
+
+    /// The placeholder shown for a dispatched op when a response produced no
+    /// tool call, in the op-call accuracy and retry-cap logs.
+    private static let noOpText = "none"
+
     /// Runs the live-model validation if `SystemLanguageModel` is available on
     /// this device, otherwise prints a skip message explaining why — never a
     /// hard failure, so a CI run of `--chat` exits cleanly.
@@ -96,9 +104,9 @@ enum ChatValidationHarness {
         case .unavailable(let reason):
             let reasonText = availabilityReasonMessages[String(describing: reason)]
                 ?? unknownAvailabilityReasonText
-            print("Foundation Models unavailable on this device (\(reasonText)); skipping live validation.")
+            print("Foundation Models unavailable on this device (\(reasonText)); \(skipValidationMessage)")
         @unknown default:
-            print("Foundation Models availability is unknown on this device; skipping live validation.")
+            print("Foundation Models availability is unknown on this device; \(skipValidationMessage)")
         }
     }
 
@@ -170,7 +178,7 @@ enum ChatValidationHarness {
             let actual = lastToolCallOp(in: session.transcript, toolName: toolName)
             let matched = actual == scripted.expectedOp
             let status = matched ? "OK" : "MISS"
-            print("[\(status)] \"\(scripted.prompt)\" -> expected '\(scripted.expectedOp)', got '\(actual ?? "none")'")
+            print("[\(status)] \"\(scripted.prompt)\" -> expected '\(scripted.expectedOp)', got '\(actual ?? noOpText)'")
             return matched
         } catch {
             print("[ERROR] \"\(scripted.prompt)\" -> \(error)")
@@ -191,7 +199,7 @@ enum ChatValidationHarness {
             do {
                 let response = try await session.respond(to: deniedCommandPrompt)
                 let op = lastToolCallOp(in: session.transcript, toolName: ShellTool.name)
-                print("[attempt \(attempt)] dispatched op '\(op ?? "none")'; model responded: \(response.content)")
+                print("[attempt \(attempt)] dispatched op '\(op ?? noOpText)'; model responded: \(response.content)")
             } catch {
                 print("[attempt \(attempt)] session threw: \(error)")
             }

@@ -39,6 +39,29 @@ comments:
 
     Leaving task in `doing` per /implement (not moving to review).
   timestamp: 2026-07-16T00:15:05.884444+00:00
+- actor: claude-code
+  id: 01kxm4zrek79yfdmjpvh29wck0
+  text: 'Iteration 2 review (complete pass, 14/14): prior 2 findings resolved (renames + mapping table). 1 NEW finding (19:19) — ChatValidationHarness.swift:93/:96 duplicate the literal "skipping live validation." across two print statements → extract a named constant and interpolate. Distinct from prior. Task stayed in `review`. Starting implement iteration.'
+  timestamp: 2026-07-16T00:24:53.459728+00:00
+- actor: claude-code
+  id: 01kxm5b57j9zs392f0v39ttjzp
+  text: |-
+    Iteration 3 (implement): pulled from review back to doing to work the single 19:19 finding in ChatValidationHarness.swift. Fixed and flipped the checkbox to [x].
+
+    Finding fix: extracted `private static let skipValidationMessage = "skipping live validation."` and interpolated it into both skip-message print statements (the `.unavailable` case and the `@unknown default` case in `run()`). Output strings are byte-identical.
+
+    Root-fix sweep across all three shell-demo sources (ChatValidationHarness.swift, main.swift, ScriptMode.swift) for other duplicated string literals of this kind (message/display literals repeated across separate statements):
+    - `"none"` — repeated as the `?? "none"` no-op fallback in two separate print statements (evaluateScriptedPrompt + probeRetryCapBehavior) → extracted `private static let noOpText = "none"`.
+    - `"shell-demo"` in ScriptMode.swift — repeated as the OperationCLIDriver `executableName` arg and the error-prefix string → extracted `private static let executableName = "shell-demo"`, mirroring main.swift's existing per-file constant.
+
+    Deliberately NOT extracted: `"execute command"` appears twice in the `scriptedPrompts` data-table array. That is fixture/table data (two prompts legitimately expecting the same op) consumed by one comparison path, not cross-statement message duplication; the reviewer left it untouched across two prior passes. Hoisting it would obscure the table and mix one constant with several one-off literals. No constant was introduced for any string appearing only once.
+
+    really-done: verification commands green — `swift build` exit 0 (shell-demo + the manual-run --chat harness compile cleanly, no warnings); `swift test` = 117 tests in 11 suites, 0 failures, 0 warnings. No swift-format reflow; 4-space style preserved; diff confined to the added constants and touched lines.
+
+    Adversarial double-check: PASS. Confirmed byte-identical extractions, no remaining message-literal duplicated 2+ times across the three files (only the intentionally-left `"execute command"` table data), no single-use constant introduced, and build/test green on an independent re-run.
+
+    Leaving task in `doing` per /implement (not moving to review).
+  timestamp: 2026-07-16T00:31:06.994769+00:00
 depends_on:
 - 01KWYJAWZQ8PN9031D9FCWG2N8
 - 01KWYJ4QGVWPQ349JDZCWDYVAY
@@ -71,4 +94,8 @@ Complete the `shell-demo` executable (`Examples/ShellDemo/Sources/shell-demo/`) 
 ## Review Findings (2026-07-15 19:01)
 
 - [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:39` — Property name 'expectedOpString' includes the redundant type name 'String'; the explicit type annotation `String` makes the suffix needless. Should be 'expectedOp' to follow 'Omit needless words' guidance. Rename the property to `expectedOp` and update all references (initialization sites and comparisons).
-- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:84` — Switch statement over a known enum type (SystemLanguageModel.Unavailability.Reason) where each arm differs only in a constant string assigned to reasonText. This should be a static mapping table rather than parallel switch arms that must be kept in lockstep. Replace the switch statement with a static Dictionary mapping enum cases to error message strings, e.g., `private static let availabilityReasonMessages: [String: String] = ["deviceNotEligible": "device not eligible", ...]`, then use a dictionary lookup with a fallback for the unknown case.
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:84` — Switch statement over a known enum type (SystemLanguageModel.Unavailability.Reason) where each arm differs only in a constant string assigned to reasonText. This should be a static mapping table rather than parallel switch arms that must be kept in lockstep. Replace the switch statement with a static Dictionary mapping enum cases to error message strings, e.g., `private static let availabilityReasonMessages: [String: String] = [\"deviceNotEligible\": \"device not eligible\", ...]`, then use a dictionary lookup with a fallback for the unknown case.
+
+## Review Findings (2026-07-15 19:19)
+
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:93` — The phrase 'skipping live validation.' is repeated in two print statements (lines 93 and 96) and should be extracted as a named constant to avoid repetition and ensure changes are made in one place. Extract as a named constant: `private static let skipValidationMessage = \"skipping live validation.\"` and interpolate it in both print statements.

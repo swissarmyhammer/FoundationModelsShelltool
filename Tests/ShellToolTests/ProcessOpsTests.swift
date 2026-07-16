@@ -136,6 +136,22 @@ import Testing
         #expect(!response.contains("linesCaptured"))
     }
 
+    /// A `kill process` payload with NO `id` key comes back as a framework-level
+    /// "missing required" correction that names the missing `id` parameter — a
+    /// returned string, not a thrown error and not a crash. The resolver
+    /// short-circuits before `execute(in:)` runs, so no process is touched.
+    @Test func killProcessWithNoIdKeyReturnsACorrectiveNamingTheMissingParameter() async throws {
+        let tool = try makeTool()
+
+        let response = try await tool.call(
+            arguments: GeneratedContent(properties: ["op": "kill process"]))
+
+        #expect(response.contains("Missing required"))
+        #expect(response.contains("id"))
+        // A corrective message, not a structured kill result.
+        #expect(!response.contains("linesCaptured"))
+    }
+
     // MARK: - §7.3 concurrency: list/kill while a command is still running
 
     @Test func listAndKillRespondWhileAnExecuteCommandIsStillInFlight() async throws {

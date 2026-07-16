@@ -209,6 +209,76 @@ import Testing
         #expect(response.contains("3: gamma"))
     }
 
+    // MARK: - command-id key parity: snake_case vs camelCase
+
+    /// The command-id key resolves identically whether spelled `command_id` or
+    /// `commandId`: `get lines` on the same stored command returns byte-identical
+    /// `LineRange` output for both spellings. Mirrors the surviving
+    /// `working_directory` parity test, closing the split-lost `command_id`
+    /// parity gap. Both spellings normalize to the same resolver key, so the
+    /// value assertions (`commandId:1` and the stored lines) — not the equality —
+    /// are what catch a broken command-id resolution; the equality pins that the
+    /// two spellings never diverge from each other.
+    @Test func snakeCaseAndCamelCaseCommandIdResolveIdenticallyForGetLines() async throws {
+        let tool = try makeTool()
+        _ = try await tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "execute command", "command": "printf 'alpha\\nbeta\\ngamma\\n'",
+            ]))
+
+        let snake = try await tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "get lines", "command_id": 1,
+            ]))
+        let camel = try await tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "get lines", "commandId": 1,
+            ]))
+
+        // Both spellings resolve to the same command, so the results are identical…
+        #expect(snake == camel)
+        // …and it is the real stored range, not two identical empties.
+        #expect(snake.contains("\"commandId\":1"))
+        #expect(snake.contains("1: alpha"))
+        #expect(snake.contains("3: gamma"))
+    }
+
+    /// The command-id filter key on `grep history` resolves identically whether
+    /// spelled `command_id` or `commandId`. Two commands emit the same pattern
+    /// with different match counts (2 then 3); filtering to command 1 must scope
+    /// to its two matches — not the five across both commands — for either
+    /// spelling. The value assertions (`total:2`, `!commandId:2`) — not the
+    /// equality — are what catch a broken filter-key resolution: both spellings
+    /// normalize together and would degrade to `total:5` in lockstep, so equality
+    /// alone would still hold. The equality pins that the two spellings agree.
+    @Test func snakeCaseAndCamelCaseCommandIdResolveIdenticallyForGrepHistory() async throws {
+        let tool = try makeTool()
+        _ = try await tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "execute command", "command": "printf 'MATCH\\nMATCH\\n'",
+            ]))
+        _ = try await tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "execute command", "command": "printf 'MATCH\\nMATCH\\nMATCH\\n'",
+            ]))
+
+        let snake = try await tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "grep history", "pattern": "MATCH", "command_id": 1,
+            ]))
+        let camel = try await tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "grep history", "pattern": "MATCH", "commandId": 1,
+            ]))
+
+        // Both spellings resolve to the same filter, so the results are identical…
+        #expect(snake == camel)
+        // …and scoped to command 1's two matches, not the five across both.
+        #expect(snake.contains("\"total\":2"))
+        #expect(snake.contains("\"commandId\":1"))
+        #expect(!snake.contains("\"commandId\":2"))
+    }
+
     // MARK: - JSON-shape snapshots
 
     @Test func grepMatchesEncodesTheExpectedFieldNames() throws {

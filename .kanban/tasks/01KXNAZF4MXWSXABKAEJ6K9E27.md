@@ -18,8 +18,8 @@ comments:
   id: 01kxnghm6bwndp8aft0xmgzx91
   text: 'really-done: PASS. Confirmatory adversarial double-check verified all three fixes correct against source with no regressions (entries 1-7 and Further reading untouched; all five presence-test phrases present verbatim). Final verification: `swift test` → 148 tests / 16 suites pass, exit 0, 0 build warnings. Work complete and green; leaving task in `doing` for /review.'
   timestamp: 2026-07-16T13:06:07.691129+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 8c80
 title: Record undocumented shipped departures in DESIGN_NOTES.md
 ---
 ## What

@@ -30,6 +30,26 @@ comments:
   id: 01kxncwr2zxpda75z6cayaxdpn
   text: 'Review finding (06:43) resolved. Renamed private `getCommandIndex(commandID:)` → `commandIndex(commandID:)` in Sources/ShellTool/ShellState.swift and updated both call sites (`appendLines`, `killProcess`). It was private with exactly 3 occurrences; grep confirms zero `getCommandIndex` remain in Sources/ or Tests/. Deliberately left `getLines(commandID:start:end:)` unrenamed — it is public API mirroring the sah `get lines` op string (per task instruction). Audited all ShellState methods: the only private get/fetch-prefixed value accessor was getCommandIndex; the rest (readLogLines, parseLogLine, resolveDirectory, prepareDirectory) are action verbs, not accessors. `swift test`: 144 tests in 15 suites passed, 0 failures, 0 warnings, exit 0. No leaked subprocesses. Adversarial double-check: PASS. Finding checkbox flipped to [x]. Task left in doing for /review.'
   timestamp: 2026-07-16T12:02:17.823233+00:00
+- actor: claude-code
+  id: 01kxndfp64hbrzj5zrf9bt5tv9
+  text: 'Iteration 2 review (complete pass, 14/14): getCommandIndex→commandIndex rename verified resolved (zero matches). 4 NEW findings (07:04), one cause — the log field separator `'':''` is hardcoded inline at ShellState.swift:145/227/237/254 (format write, parse, firstIndex, etc.) → extract `private static let fieldSeparator = ":"` and use it at EVERY occurrence (both the join-on-write and split/scan-on-read sites), so a re-review finds zero recurrences. Task stayed in `review`. Starting implement iteration.'
+  timestamp: 2026-07-16T12:12:38.468978+00:00
+- actor: claude-code
+  id: 01kxndnfpe3sy4gxwnnn8h1y87
+  text: |-
+    Review findings (07:04, all 4, one cause) resolved. Extracted the log field separator into a single source of truth: `private static let fieldSeparator: Character = ":"` (declared with the other actor properties in ShellState, just after `processes`). Chose `Character` because the two scan sites (`firstIndex(of:)`, `split(separator:)`) require it, and a Character interpolates cleanly into the write/prefix strings — so one constant serves every site.
+
+    Every prior field-separator literal now references it:
+    - appendLines write: `"\(sessionID)\(Self.fieldSeparator)\(commandID)\(Self.fieldSeparator)\(commands[index].lineCount)\(Self.fieldSeparator)\(line)\n"`
+    - getLines prefix: `"\(sessionID)\(Self.fieldSeparator)\(commandID)\(Self.fieldSeparator)"`
+    - getLines `firstIndex(of: Self.fieldSeparator)`
+    - grep sessionPrefix: `"\(sessionID)\(Self.fieldSeparator)"`
+    - parseLogLine `split(separator: Self.fieldSeparator, maxSplits: 2, ...)`
+
+    Grep of the whole file for `":"`/`':'` now returns exactly ONE hit: the constant definition. No field-separator literal remains anywhere else. Wire format is byte-identical (Character ":" interpolates to the same byte as the old String ":"); proven by the getLines/grep/session-isolation round-trip tests staying green. Value unchanged.
+
+    `swift test`: 144 tests in 15 suites passed, 0 failures. Clean `swift build`: 0 warnings, 0 errors. No leaked subprocesses (pgrep clean). Task left in doing for /review.
+  timestamp: 2026-07-16T12:15:48.430578+00:00
 position_column: doing
 position_ordinal: '80'
 title: Fix grep matching against log-line metadata prefix
@@ -60,3 +80,10 @@ Files:
 ## Review Findings (2026-07-16 06:43)
 
 - [x] `Sources/ShellTool/ShellState.swift:241` — Method name includes needless `get` prefix — the verb is implicit at the call site (`state.getCommandIndex(...)` vs `state.commandIndex(...)`). Rename `getCommandIndex` to `commandIndex`.
+
+## Review Findings (2026-07-16 07:04)
+
+- [x] `Sources/ShellTool/ShellState.swift:145` — The log format separator ':' is hardcoded inline in this format string; the same literal appears on lines 227, 254, and 264. This should be a single named constant. Define `private static let fieldSeparator = ":"` and use it to construct the format string on this line.
+- [x] `Sources/ShellTool/ShellState.swift:227` — The log format separator ':' is hardcoded inline; the same literal appears on lines 145, 254, and 264. It should be a named constant. Replace the hardcoded ':' with a named constant `fieldSeparator`.
+- [x] `Sources/ShellTool/ShellState.swift:237` — The log format separator ':' is hardcoded inline in this firstIndex call; the same literal appears on lines 145, 209, 227, 254, and 264. It should be a named constant. Replace the hardcoded ':' with a named constant `fieldSeparator`.
+- [x] `Sources/ShellTool/ShellState.swift:254` — The log format separator ':' is hardcoded inline; the same literal appears on lines 145, 227, and 264. It should be a named constant. Replace the hardcoded ':' with a named constant `fieldSeparator`.

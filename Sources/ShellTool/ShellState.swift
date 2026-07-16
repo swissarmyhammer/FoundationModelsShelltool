@@ -115,6 +115,14 @@ actor ShellState {
     /// Running commands only: command id → process-group leader pid.
     private var processes: [Int: pid_t] = [:]
 
+    /// The single field separator in a stored log line's
+    /// `{sessionID}:{cmdID}:{lineNumber}:{text}` framing — one source of truth
+    /// for both the join-on-write and the split/scan-on-read sites, so the wire
+    /// format can never drift between the two. Declared as `Character` because
+    /// that is the type the scan sites (`firstIndex(of:)`, `split(separator:)`)
+    /// require; it also interpolates cleanly into the write/prefix strings.
+    private static let fieldSeparator: Character = ":"
+
     // MARK: - Initialization
 
     /// Create a `ShellState`, preferring `preferredDirectory` for the `.shell`
@@ -180,7 +188,7 @@ actor ShellState {
         var buffer = Data()
         for line in stdout + stderr {
             commands[index].lineCount += 1
-            let entry = "\(sessionID):\(commandID):\(commands[index].lineCount):\(line)\n"
+            let entry = "\(sessionID)\(Self.fieldSeparator)\(commandID)\(Self.fieldSeparator)\(commands[index].lineCount)\(Self.fieldSeparator)\(line)\n"
             buffer.append(Data(entry.utf8))
         }
         guard !buffer.isEmpty else { return }
@@ -248,13 +256,13 @@ actor ShellState {
     func getLines(commandID: Int, start: Int? = nil, end: Int? = nil) throws -> [LogLine] {
         let lower = start ?? 1
         let upper = end ?? Int.max
-        let prefix = "\(sessionID):\(commandID):"
+        let prefix = "\(sessionID)\(Self.fieldSeparator)\(commandID)\(Self.fieldSeparator)"
 
         var results: [LogLine] = []
         for line in try readLogLines() {
             guard line.hasPrefix(prefix) else { continue }
             let rest = line.dropFirst(prefix.count)
-            guard let colon = rest.firstIndex(of: ":"),
+            guard let colon = rest.firstIndex(of: Self.fieldSeparator),
                   let number = Int(rest[..<colon]),
                   number >= lower, number <= upper else { continue }
             let text = String(rest[rest.index(after: colon)...])
@@ -278,7 +286,7 @@ actor ShellState {
             throw ShellStateError.invalidRegex(pattern: pattern, underlying: error)
         }
 
-        let sessionPrefix = "\(sessionID):"
+        let sessionPrefix = "\(sessionID)\(Self.fieldSeparator)"
         var results: [GrepResult] = []
         var total = 0
         for line in try readLogLines() {
@@ -311,7 +319,7 @@ actor ShellState {
     private static func parseLogLine(_ line: String, sessionPrefix: String, commandIDFilter: Int?) -> GrepResult? {
         guard line.hasPrefix(sessionPrefix) else { return nil }
         let rest = line.dropFirst(sessionPrefix.count)
-        let parts = rest.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+        let parts = rest.split(separator: Self.fieldSeparator, maxSplits: 2, omittingEmptySubsequences: false)
         guard parts.count == 3, let commandID = Int(parts[0]) else { return nil }
         if let filter = commandIDFilter, filter != commandID { return nil }
         guard let lineNumber = Int(parts[1]) else { return nil }

@@ -36,7 +36,7 @@ enum ChatValidationHarness {
         /// The natural-language prompt sent to the model.
         let prompt: String
         /// The `"verb noun"` op string the model is expected to dispatch.
-        let expectedOpString: String
+        let expectedOp: String
     }
 
     /// The scripted prompt set, in the order a human would run them: a long
@@ -45,22 +45,22 @@ enum ChatValidationHarness {
     private static let scriptedPrompts: [ScriptedPrompt] = [
         ScriptedPrompt(
             prompt: "Run the command `seq 1 100` and show me its output.",
-            expectedOpString: "execute command"),
+            expectedOp: "execute command"),
         ScriptedPrompt(
             prompt: "That output was truncated to the last 32 lines. Search the command history for the line that is exactly '50'.",
-            expectedOpString: "grep history"),
+            expectedOp: "grep history"),
         ScriptedPrompt(
             prompt: "Now show me lines 1 through 5 of that command's output.",
-            expectedOpString: "get lines"),
+            expectedOp: "get lines"),
         ScriptedPrompt(
             prompt: "Start a long-running command in the background: run `sleep 60`.",
-            expectedOpString: "execute command"),
+            expectedOp: "execute command"),
         ScriptedPrompt(
             prompt: "List all the commands you've run so far with their status.",
-            expectedOpString: "list processes"),
+            expectedOp: "list processes"),
         ScriptedPrompt(
             prompt: "Kill the sleep command — it has command id 2.",
-            expectedOpString: "kill process"),
+            expectedOp: "kill process"),
     ]
 
     /// A command `ShellPolicy` denies, for observing the corrective message and
@@ -72,6 +72,20 @@ enum ChatValidationHarness {
     private static let sessionInstructions =
         "You operate a virtual shell using the shell tool. Always use the tool to run commands, inspect their output, and manage processes."
 
+    /// Human-readable text for each `SystemLanguageModel.Availability`
+    /// unavailability reason, keyed by the reason's case name
+    /// (`String(describing:)`). A reason absent from the table — including any
+    /// future `@unknown` case — falls back to `unknownAvailabilityReasonText`.
+    private static let availabilityReasonMessages: [String: String] = [
+        "deviceNotEligible": "device not eligible",
+        "appleIntelligenceNotEnabled": "Apple Intelligence not enabled",
+        "modelNotReady": "model not ready",
+    ]
+
+    /// The text used when an unavailability reason is not in
+    /// `availabilityReasonMessages`.
+    private static let unknownAvailabilityReasonText = "unknown reason"
+
     /// Runs the live-model validation if `SystemLanguageModel` is available on
     /// this device, otherwise prints a skip message explaining why — never a
     /// hard failure, so a CI run of `--chat` exits cleanly.
@@ -80,13 +94,8 @@ enum ChatValidationHarness {
         case .available:
             await runValidation()
         case .unavailable(let reason):
-            let reasonText: String
-            switch reason {
-            case .deviceNotEligible: reasonText = "device not eligible"
-            case .appleIntelligenceNotEnabled: reasonText = "Apple Intelligence not enabled"
-            case .modelNotReady: reasonText = "model not ready"
-            @unknown default: reasonText = "unknown reason"
-            }
+            let reasonText = availabilityReasonMessages[String(describing: reason)]
+                ?? unknownAvailabilityReasonText
             print("Foundation Models unavailable on this device (\(reasonText)); skipping live validation.")
         @unknown default:
             print("Foundation Models availability is unknown on this device; skipping live validation.")
@@ -150,7 +159,7 @@ enum ChatValidationHarness {
     ///   - scripted: The prompt and its expected op string.
     ///   - session: The session to send the prompt to.
     ///   - toolName: The fused tool's name, to find its call in the transcript.
-    /// - Returns: Whether the dispatched op matched `scripted.expectedOpString`.
+    /// - Returns: Whether the dispatched op matched `scripted.expectedOp`.
     private static func evaluateScriptedPrompt(
         _ scripted: ScriptedPrompt,
         session: LanguageModelSession,
@@ -158,10 +167,10 @@ enum ChatValidationHarness {
     ) async -> Bool {
         do {
             _ = try await session.respond(to: scripted.prompt)
-            let actual = lastToolCallOpString(in: session.transcript, toolName: toolName)
-            let matched = actual == scripted.expectedOpString
+            let actual = lastToolCallOp(in: session.transcript, toolName: toolName)
+            let matched = actual == scripted.expectedOp
             let status = matched ? "OK" : "MISS"
-            print("[\(status)] \"\(scripted.prompt)\" -> expected '\(scripted.expectedOpString)', got '\(actual ?? "none")'")
+            print("[\(status)] \"\(scripted.prompt)\" -> expected '\(scripted.expectedOp)', got '\(actual ?? "none")'")
             return matched
         } catch {
             print("[ERROR] \"\(scripted.prompt)\" -> \(error)")
@@ -181,7 +190,7 @@ enum ChatValidationHarness {
         for attempt in 1...3 {
             do {
                 let response = try await session.respond(to: deniedCommandPrompt)
-                let op = lastToolCallOpString(in: session.transcript, toolName: ShellTool.name)
+                let op = lastToolCallOp(in: session.transcript, toolName: ShellTool.name)
                 print("[attempt \(attempt)] dispatched op '\(op ?? "none")'; model responded: \(response.content)")
             } catch {
                 print("[attempt \(attempt)] session threw: \(error)")
@@ -196,7 +205,7 @@ enum ChatValidationHarness {
     ///   - transcript: The session transcript to search.
     ///   - toolName: The tool name to match `Transcript.ToolCall.toolName`
     ///     against.
-    private static func lastToolCallOpString(in transcript: Transcript, toolName: String) -> String? {
+    private static func lastToolCallOp(in transcript: Transcript, toolName: String) -> String? {
         var lastMatch: String?
         for entry in transcript {
             guard case .toolCalls(let calls) = entry else { continue }

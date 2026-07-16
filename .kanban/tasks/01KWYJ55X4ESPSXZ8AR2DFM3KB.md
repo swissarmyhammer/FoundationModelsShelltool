@@ -16,6 +16,29 @@ comments:
   id: 01kxm3fddrgzb03ck8vnmfysyd
   text: 'really-done: verification commands green (`swift build` clean; `swift test` = 117 tests, 0 failures, 0 warnings) and adversarial double-check returned PASS after independent re-run. Confirmed: default CLI path unchanged (runCLI is the original entry logic verbatim, only fronted by a dispatcher switch); --script builds ONE driver/tool/context once and shares it across all lines; tokenizer handles double-quoted values containing single quotes, empty quotes, adjacency, unterminated quotes; --chat is availability-gated with no non-zero exit when unavailable and reports all three required elements (op-call accuracy, tokenCount schema size, retry-cap behavior); subprocess tests read-to-EOF before waitUntilExit (no deadlock), isolate+clean temp dirs, no leaked processes. Non-blocking note from the critic: the retry-cap probe sends 3 separate turns (mirrors the upstream NotesTool reference) rather than intra-turn retry — acceptable per the manual-run print-only criterion. Leaving task in `doing` per /implement (not moving to review). Ready for /review.'
   timestamp: 2026-07-15T23:58:29.304899+00:00
+- actor: claude-code
+  id: 01kxm424csf0e93pq65ahkp7pd
+  text: 'Iteration 1 review (complete pass, 14/14): 2 findings (19:01) in ChatValidationHarness.swift — (1) :39 `expectedOpString` has redundant `String` suffix (type already annotated) → rename to `expectedOp`; (2) :84 `switch` over SystemLanguageModel.Unavailability.Reason arms differ only by a constant reasonText → replace with a static mapping table + unknown fallback (data-driven). Task stayed in `review`. Starting implement iteration.'
+  timestamp: 2026-07-16T00:08:42.649775+00:00
+- actor: claude-code
+  id: 01kxm43myxzgg8r2x6fwxv0x6p
+  text: 'Iteration 2 (implement): pulled from review back to doing to work the 2 review findings (19:01) in ChatValidationHarness.swift — (1) rename expectedOpString -> expectedOp (redundant String suffix); (2) replace the parallel-branch switch over SystemLanguageModel.Unavailability.Reason with a static [String: String] mapping table + unknown fallback. Also grepping the file for any other redundant type-suffixed identifier or parallel-branch switch to fix at root.'
+  timestamp: 2026-07-16T00:09:32.381859+00:00
+- actor: claude-code
+  id: 01kxm4dtmwm8x8wx00rjv5jfag
+  text: |-
+    Both review findings (19:01) fixed in ChatValidationHarness.swift; both checkboxes flipped to [x].
+
+    (1) Renamed property `expectedOpString` -> `expectedOp` (declaration + all 6 initializer labels + comparison + interpolation + doc comment). Root-fix sweep: the same-class redundant identifier `lastToolCallOpString` (a `*String`-suffixed func with explicit `-> String?`) was also renamed to `lastToolCallOp` at its declaration and both call sites. Grep confirms zero `*OpString` identifiers remain.
+
+    (2) Replaced the parallel-branch `switch` over SystemLanguageModel.Unavailability.Reason (arms differed only by a constant reasonText) with a data-driven static table `availabilityReasonMessages: [String: String]` keyed by `String(describing: reason)`, plus a named `unknownAvailabilityReasonText` fallback covering the unknown/@unknown-default case. Same four output messages preserved verbatim. The remaining outer `switch` over .available/.unavailable/@unknown default is genuine per-arm branching (distinct work per arm), not a parallel-constant switch, so it correctly stays.
+
+    really-done: verification commands green — `swift build` exit 0 (shell-demo compiles cleanly, no warnings); `swift test` = 117 tests in 11 suites, 0 failures, 0 warnings. --chat harness remains manual-run/excluded from the suite (intended) but compiles under swift build.
+
+    Adversarial double-check: returned REVISE with (Medium) `lastToolCallOpString` still type-suffixed -> FIXED (renamed to `lastToolCallOp`); (Low) `String(describing:)` key strategy -> ACCEPTED-RISK. It is sound for the current value-less enum cases (yields bare case names matching the table) and non-crashing; the only residual is a silent degrade-to-fallback if Apple later adds CustomStringConvertible or an associated value to a case — acceptable given the graceful fallback, and the coupling is documented in the property's doc comment. This matches the reviewer's own explicit suggestion to use a String-keyed dictionary. No blocker.
+
+    Leaving task in `doing` per /implement (not moving to review).
+  timestamp: 2026-07-16T00:15:05.884444+00:00
 depends_on:
 - 01KWYJAWZQ8PN9031D9FCWG2N8
 - 01KWYJ4QGVWPQ349JDZCWDYVAY
@@ -44,3 +67,8 @@ Complete the `shell-demo` executable (`Examples/ShellDemo/Sources/shell-demo/`) 
 
 ## Workflow
 - Use `/tdd` for `--script` mode and the integration tests; the `--chat` harness is written directly (it's manual-run, not test-driven) but must not break `swift build`.
+
+## Review Findings (2026-07-15 19:01)
+
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:39` — Property name 'expectedOpString' includes the redundant type name 'String'; the explicit type annotation `String` makes the suffix needless. Should be 'expectedOp' to follow 'Omit needless words' guidance. Rename the property to `expectedOp` and update all references (initialization sites and comparisons).
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:84` — Switch statement over a known enum type (SystemLanguageModel.Unavailability.Reason) where each arm differs only in a constant string assigned to reasonText. This should be a static mapping table rather than parallel switch arms that must be kept in lockstep. Replace the switch statement with a static Dictionary mapping enum cases to error message strings, e.g., `private static let availabilityReasonMessages: [String: String] = ["deviceNotEligible": "device not eligible", ...]`, then use a dictionary lookup with a fallback for the unknown case.

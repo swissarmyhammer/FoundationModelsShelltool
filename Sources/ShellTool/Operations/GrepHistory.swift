@@ -76,11 +76,12 @@ extension GrepHistory {
             }
             return .matches(
                 GrepMatches(matches: matches, shown: matches.count, total: found.total))
-        } catch ShellStateError.invalidRegex(let pattern, let underlying) {
+        } catch ShellStateError.invalidRegex(let pattern, let underlyingMessage) {
             // An uncompilable pattern: return the correction rather than throw,
             // so the model can rephrase within the turn.
             return .corrective(
-                ShellStateError.invalidRegex(pattern: pattern, underlying: underlying).description)
+                ShellStateError.invalidRegex(pattern: pattern, underlyingMessage: underlyingMessage)
+                    .description)
         }
     }
 }

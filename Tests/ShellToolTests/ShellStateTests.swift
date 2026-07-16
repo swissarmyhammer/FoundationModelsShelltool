@@ -170,6 +170,24 @@ import Testing
         }
     }
 
+    @Test func shellStateErrorIsSendableAcrossActorBoundaries() {
+        // `ShellStateError` is thrown from `ShellState` (an actor) and awaited
+        // across the actor boundary, so it must be `Sendable`. This is a
+        // compile-time guarantee: `requireSendable` accepts only a `Sendable`
+        // metatype, so the test target fails to build if the conformance is lost
+        // (e.g. by an associated value regressing to a non-`Sendable` `any Error`).
+        func requireSendable<T: Sendable>(_: T.Type) {}
+        requireSendable(ShellStateError.self)
+    }
+
+    @Test func invalidRegexDescriptionIncludesPatternAndUnderlyingMessage() {
+        // The `invalidRegex` case stores the underlying failure as a plain
+        // `String` (captured at throw time) so the error stays `Sendable`; its
+        // description must still read as the pattern plus the underlying message.
+        let error = ShellStateError.invalidRegex(pattern: "[bad", underlyingMessage: "boom")
+        #expect(error.description == "Invalid regex pattern \"[bad\": boom")
+    }
+
     @Test func grepLiteralTreatsPatternAsPlainText() async throws {
         let tmp = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: tmp) }

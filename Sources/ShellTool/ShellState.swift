@@ -20,9 +20,13 @@ import Foundation
 /// The raw values are the on-the-wire strings the Rust tool emits, so responses
 /// stay identical across the port.
 enum CommandStatus: String, Sendable {
+    /// The command is currently executing.
     case running
+    /// The command finished on its own.
     case completed
+    /// The command was killed via `killProcess`.
     case killed
+    /// The command exceeded its timeout (on-the-wire: "timed_out").
     case timedOut = "timed_out"
 }
 
@@ -80,13 +84,19 @@ struct GrepResults: Sendable {
 }
 
 /// Recoverable errors surfaced by `ShellState`.
-enum ShellStateError: Error, CustomStringConvertible {
+///
+/// `Sendable` so it can be thrown from `ShellState` (an `actor`) and awaited
+/// across the actor boundary; every associated value is a value type, so the
+/// `invalidRegex` case captures the underlying failure as a message `String`
+/// rather than holding a non-`Sendable` `any Error`.
+enum ShellStateError: Error, CustomStringConvertible, Sendable {
     /// `appendLines`/`killProcess` referenced a command id that was never started.
     case unknownCommand(Int)
     /// `killProcess` referenced a command with no registered running process.
     case noRunningProcess(Int)
-    /// `grep` was given a pattern that failed to compile as a regex.
-    case invalidRegex(pattern: String, underlying: any Error)
+    /// `grep` was given a pattern that failed to compile as a regex; carries the
+    /// underlying failure's message, captured at throw time.
+    case invalidRegex(pattern: String, underlyingMessage: String)
     /// The log file could not be created in the resolved storage directory.
     case logCreationFailed(URL)
 
@@ -96,8 +106,8 @@ enum ShellStateError: Error, CustomStringConvertible {
             return "Unknown command ID \(id)"
         case .noRunningProcess(let id):
             return "No running process for command ID \(id)"
-        case .invalidRegex(let pattern, let underlying):
-            return "Invalid regex pattern \"\(pattern)\": \(underlying)"
+        case .invalidRegex(let pattern, let underlyingMessage):
+            return "Invalid regex pattern \"\(pattern)\": \(underlyingMessage)"
         case .logCreationFailed(let url):
             return "Failed to create log file at \(url.path)"
         }
@@ -283,7 +293,11 @@ actor ShellState {
         do {
             regex = try Regex(source)
         } catch {
-            throw ShellStateError.invalidRegex(pattern: pattern, underlying: error)
+            // Capture the failure's message now so the error stays `Sendable`
+            // (no `any Error` held across the actor boundary); `String(describing:)`
+            // reproduces the same text the description previously interpolated.
+            throw ShellStateError.invalidRegex(
+                pattern: pattern, underlyingMessage: String(describing: error))
         }
 
         let sessionPrefix = "\(sessionID)\(Self.fieldSeparator)"

@@ -1,3 +1,6 @@
 .DS_Store
 .build/
 .claude/settings.local.json
+
+# Shell tool runtime data (auto-created log store)
+.shell/

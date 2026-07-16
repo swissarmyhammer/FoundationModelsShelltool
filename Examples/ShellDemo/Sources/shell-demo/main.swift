@@ -25,8 +25,6 @@
 // and propagating its exit code.
 
 import Foundation
-import OperationsCLI
-import ShellTool
 
 /// The `shell-demo` executable's entry point: dispatches to `--chat` or
 /// `--script` mode, or the default CLI mode, based on the first argument.
@@ -66,10 +64,7 @@ enum ShellDemoMain {
     ///   name.
     private static func runCLI(arguments: [String]) async {
         do {
-            let driver = try OperationCLIDriver(
-                tool: try ShellTool.make(),
-                executableName: executableName
-            )
+            let driver = try ShellDemoDriver.make(executableName: executableName)
             let result = await driver.run(arguments: arguments)
             if !result.output.isEmpty {
                 print(result.output)

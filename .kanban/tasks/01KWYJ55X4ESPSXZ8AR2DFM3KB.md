@@ -114,6 +114,37 @@ comments:
 
     Leaving task in `doing` per /implement (not moving to review).
   timestamp: 2026-07-16T01:02:25.167165+00:00
+- actor: claude-code
+  id: 01kxm7qbzv4thv8ercpgace449
+  text: 'Iteration 5 review (complete pass, 14/14): prior doc-summary finding resolved. 2 NEW findings (20:05), one cause — identical OperationCLIDriver construction (ShellTool.make() + executableName) duplicated across ScriptMode.swift:34 and main.swift:69 → extract a shared makeDriver(executableName:) helper both entry points call. Distinct from prior rounds. Task stayed in `review`. Starting implement iteration.'
+  timestamp: 2026-07-16T01:12:44.283103+00:00
+- actor: claude-code
+  id: 01kxm830xjmyk4hwjs856911ex
+  text: |-
+    Iteration 6 (implement): pulled from review back to doing to work the 2 review findings (20:05) — one shared cause: identical OperationCLIDriver construction duplicated across main.swift's runCLI() and ScriptMode.run(). Both checkboxes flipped to [x].
+
+    Root fix: extracted a single shared helper. New file Examples/ShellDemo/Sources/shell-demo/ShellDemoDriver.swift — `enum ShellDemoDriver { static func make(executableName: String) throws -> OperationCLIDriver }` returning `try OperationCLIDriver(tool: try ShellTool.make(), executableName: executableName)`. Placed in its own file in the same executable target so both entry points reach it symmetrically (no cross-entry-point dependency, e.g. ScriptMode importing ShellDemoMain).
+
+    Both call sites now call it:
+    - main.swift runCLI(): `let driver = try ShellDemoDriver.make(executableName: executableName)` (replaced the 4-line inline construction).
+    - ScriptMode.swift run(): `let driver = try ShellDemoDriver.make(executableName: executableName)` (replaced the inline construction).
+
+    Behavior preserved exactly: each site still owns its per-file `executableName = "shell-demo"` constant and passes it in (same value at each site, per the task's constraint); each keeps its own do/catch so `make`'s `throws` propagates identically (stderr prefix + exit(1)); same ShellTool.make() default ShellContext rooted at <cwd>/.shell.
+
+    Import cleanup (natural consequence of the extraction, not scope creep): main.swift no longer names OperationCLIDriver or ShellTool, so dropped `import OperationsCLI` + `import ShellTool` (keeps Foundation). ScriptMode.swift no longer names ShellTool, so dropped `import ShellTool` but KEEPS `import OperationsCLI` (still used for the `OperationCLIDriver` param type in run(input:driver:emit:)). ShellDemoDriver.swift imports both (both used).
+
+    --chat LEFT ALONE per the task: ChatValidationHarness still calls ShellTool.make() directly for the LanguageModelSession tool and SystemLanguageModel.tokenCount — it builds no OperationCLIDriver, so it is correctly NOT forced through the CLI-driver helper.
+
+    Re-review grep confirms zero duplication: `OperationCLIDriver(` now appears in exactly ONE place (ShellDemoDriver.swift:make); `ShellDemoDriver.make` appears at exactly the two call sites (main.swift, ScriptMode.swift).
+
+    Note: SourceKit LSP is NOT installed on this workspace, so the files-tool inline diagnostics reported spurious single-file errors ("Cannot find ScriptMode/ShellDemoDriver in scope", "'main' attribute cannot be used in a module that contains top-level code") — these are single-file-analysis artifacts, not real errors; the actual compiler resolves all same-module symbols.
+
+    really-done: verification commands green — `swift build` exit 0 (shell-demo compiles cleanly; full build grep for warning:/error: = empty); `swift test` = 117 tests in 11 suites, 0 failures, 0 warnings (grep for warning:/error:/failed = empty). The subprocess-based --script and CLI full-flow tests exercise both refactored call paths end-to-end. No swift-format reflow; 4-space style preserved; diff confined to the new helper file + the 2 call sites + the orphaned imports.
+
+    Adversarial double-check: PASS. Independently confirmed single construction site (grep), behavior preserved at both sites (same executableName, same throws/catch, same store/context), --chat correctly untouched, import removals safe (clean rebuild, no needed import dropped), no warnings, 4-space style consistent. Also smoke-tested the --script shared-session contract live (execute early, grep sees it).
+
+    Leaving task in `doing` per /implement (not moving to review).
+  timestamp: 2026-07-16T01:19:06.162861+00:00
 depends_on:
 - 01KWYJAWZQ8PN9031D9FCWG2N8
 - 01KWYJ4QGVWPQ349JDZCWDYVAY
@@ -160,3 +191,8 @@ Complete the `shell-demo` executable (`Examples/ShellDemo/Sources/shell-demo/`) 
 ## Review Findings (2026-07-15 19:47)
 
 - [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:72` — Doc comment summary contains two sentences instead of a single sentence as the rule requires. Rewrite as one sentence, or move 'A reason absent from the table...' into a separate elaboration paragraph following a blank `///` line.
+
+## Review Findings (2026-07-15 20:05)
+
+- [x] `Examples/ShellDemo/Sources/shell-demo/ScriptMode.swift:34` — Driver construction is duplicated across entry points. The identical OperationCLIDriver initialization with ShellTool.make() and executableName appears in both ScriptMode.run() and main.swift's runCLI(), creating parallel implementations where a shared helper function would eliminate duplication. Extract driver construction into a shared helper function (e.g., `makeDriver(executableName:)`) that both entry points call, eliminating the duplicated initialization logic.
+- [x] `Examples/ShellDemo/Sources/shell-demo/main.swift:69` — Driver construction is duplicated across entry points. The identical OperationCLIDriver initialization with ShellTool.make() and executableName appears in both ScriptMode.run() and main.swift's runCLI(), creating parallel implementations where a shared helper function would eliminate duplication. Extract driver construction into a shared helper function (e.g., `makeDriver(executableName:)`) that both entry points call, eliminating the duplicated initialization logic.

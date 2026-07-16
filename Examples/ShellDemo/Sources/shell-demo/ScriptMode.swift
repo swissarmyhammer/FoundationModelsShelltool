@@ -15,7 +15,6 @@
 
 import Foundation
 import OperationsCLI
-import ShellTool
 
 /// The `shell-demo --script` batch driver: run stdin op lines against one
 /// shared session.
@@ -31,7 +30,7 @@ enum ScriptMode {
     /// aggregated across the whole script.
     static func run() async {
         do {
-            let driver = try OperationCLIDriver(tool: try ShellTool.make(), executableName: executableName)
+            let driver = try ShellDemoDriver.make(executableName: executableName)
             let input = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
             let exitCode = await run(input: input, driver: driver) { print($0) }
             if exitCode != 0 {

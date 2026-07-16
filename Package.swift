@@ -35,6 +35,13 @@ let package = Package(
         ),
         // YAML parsing for the stacked `ShellPolicy` configuration files.
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.0"),
+        // SwiftSyntax powers `DocCoverageTests`' scanner, which parses every
+        // source file in `Sources/ShellTool` and fails the build on any
+        // undocumented `public` declaration. Already in the resolved graph
+        // transitively (the `@Operation` macro depends on it); declared
+        // explicitly here so the test target can link `SwiftSyntax`/`SwiftParser`
+        // directly. Mirrors the upstream package's own doc-coverage dependency.
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "604.0.0-latest"),
     ],
     targets: [
         // Core library target: the shell operations and their supporting
@@ -87,6 +94,10 @@ let package = Package(
                 // `ShellPolicy.builtinYAML` and detect any key the lenient
                 // production decoder would silently ignore.
                 .product(name: "Yams", package: "Yams"),
+                // Parse `Sources/ShellTool` in `DocCoverageTests` to fail the
+                // build on any undocumented `public` declaration.
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftParser", package: "swift-syntax"),
             ]
         ),
     ]

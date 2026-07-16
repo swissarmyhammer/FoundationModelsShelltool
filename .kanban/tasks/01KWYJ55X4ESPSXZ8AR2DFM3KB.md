@@ -188,8 +188,8 @@ comments:
 depends_on:
 - 01KWYJAWZQ8PN9031D9FCWG2N8
 - 01KWYJ4QGVWPQ349JDZCWDYVAY
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8980'
 title: 'Example: shell-demo (CLI / --chat / --script)'
 ---
 ## What

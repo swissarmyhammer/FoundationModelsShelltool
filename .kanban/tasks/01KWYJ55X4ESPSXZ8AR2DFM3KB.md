@@ -85,6 +85,35 @@ comments:
 
     Leaving task in `doing` per /implement (not moving to review).
   timestamp: 2026-07-16T00:44:42.448055+00:00
+- actor: claude-code
+  id: 01kxm6pat5xre0qab59s4v53s5
+  text: 'Iteration 4 review (complete pass, 14/14): prior 2 param-label findings resolved. 1 NEW finding (19:47) — ChatValidationHarness.swift:72 doc summary has two sentences (must be one-sentence summary; move the second into an elaboration paragraph after a blank ///). Distinct line/finding, not a guardrail recurrence, but this file has yielded one distinct nit per round. Dispatching a COMPREHENSIVE style audit of all shell-demo sources (every doc comment → single-sentence summary + blank /// separator; plus re-check dup literals, param labels, redundant type suffixes, magic values, parallel switches) to converge it in one pass.'
+  timestamp: 2026-07-16T00:54:41.733033+00:00
+- actor: claude-code
+  id: 01kxm74fcfwegmr44qrghgh6js
+  text: |-
+    Iteration 5 (implement): pulled from review back to doing to work the single 19:47 finding, plus a COMPREHENSIVE doc-comment style pass across all three shell-demo sources to stop the one-nit-per-round trickle. Checkbox flipped to [x].
+
+    Cited finding fix (ChatValidationHarness.swift, `availabilityReasonMessages`): the summary was two sentences. Split so the first `///` line ("Human-readable text for each `SystemLanguageModel.Availability` unavailability reason, keyed by the reason's case name (`String(describing:)`).") is a one-sentence summary, then a blank `///` line, then the "A reason absent from the table — including any future `@unknown` case — falls back to `unknownAvailabilityReasonText`." elaboration paragraph.
+
+    Proactive comprehensive audit — rule class 1 (doc comments: one-sentence summary + blank `///` before elaboration). I read every `///` doc comment on every declaration (incl. nested struct fields) in all three files. THREE additional two-sentence summaries were found and split the same way, so the next review finds zero doc-comment findings:
+    - ChatValidationHarness.swift `scriptedPrompts`: "...then a background process's lifecycle." | "Each targets one shell operation." → summary + blank `///` + elaboration.
+    - main.swift `runCLI(arguments:)`: "Drives `arguments`... (rooted at `<cwd>/.shell`)." | "Prints the driver's output... non-zero." → summary + blank `///` + elaboration paragraph (the existing blank line + `- Parameter` block preserved).
+    - ScriptMode.swift `run()`: "Build the shared tool and driver... printing each line's output." | "Exits non-zero if..." → summary + blank `///` + elaboration.
+    File-header block comments use `//` (not `///`) so are correctly out of scope for the doc rule; left untouched.
+
+    Rule classes 2-5 across all three files — swept, ZERO remaining (nothing to fix; prior iterations already handled these for these files):
+    - (2) Duplicated literals: only `"execute command"` repeats, and solely inside the `scriptedPrompts` fixture table (data, not cross-statement message duplication — matches the library's own accepted YAML data repetition like "Disk partitioning command"). `skipValidationMessage`, `noOpText`, `executableName` already extracted. No new constants introduced (no single-use hoists).
+    - (3) Param labels: no `_`-omitted first labels on any transformation/complex-eval function remain (grep clean). `lastToolCallOp(in:)` keeps its idiomatic preposition label — correct, not an omission.
+    - (4) Redundant type suffixes: grep for `*String`/`*Int`/`*Bool` identifiers → zero.
+    - (5) Magic values / parallel branches: the retry cap `3` occurs exactly once as a numeric literal (`for attempt in 1...3`); its other mentions are prose inside a string/doc, not repeated numeric constants, so it does not meet the "repeated constant" trigger — deliberately NOT extracted (single code-level literal; never flagged across 4 prior passes; extracting would be a single-use constant). The `.unavailable` vs `@unknown default` print arms differ structurally (reason interpolation vs distinct phrasing), not by one constant — genuine branching, not a table candidate.
+
+    really-done: verification commands green — `swift build --target shell-demo` exit 0 (clean, no warnings); `swift test` = 117 tests in 11 suites, 0 failures, 0 warnings (grep for `warning:`/`error:`/`failed` = none). No swift-format reflow; 4-space style preserved; diff confined to the 4 doc-comment splits.
+
+    Adversarial double-check: PASS. Independently catalogued every `///` doc comment in all three files and confirmed no remaining multi-sentence summary, no malformed comment/lost blank-line separator, and no genuine remaining class 2-5 instance. Sole residual noted (not a violation): the retry-cap `3` — matches my non-extraction reasoning.
+
+    Leaving task in `doing` per /implement (not moving to review).
+  timestamp: 2026-07-16T01:02:25.167165+00:00
 depends_on:
 - 01KWYJAWZQ8PN9031D9FCWG2N8
 - 01KWYJ4QGVWPQ349JDZCWDYVAY
@@ -127,3 +156,7 @@ Complete the `shell-demo` executable (`Examples/ShellDemo/Sources/shell-demo/`) 
 
 - [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:130` — First parameter omits its label in `evaluateScriptedPrompt(_ scripted:...)`, but this function performs a complex evaluation, not a value-preserving conversion. The fluent-usage rule restricts label omission strictly to value-preserving conversions. Change `(_ scripted: ScriptedPrompt,` to `(scripted: ScriptedPrompt,` and update the call site on line 126 from `evaluateScriptedPrompt(scripted, ...)` to `evaluateScriptedPrompt(scripted: scripted, ...)`.
 - [x] `Examples/ShellDemo/Sources/shell-demo/ScriptMode.swift:68` — First parameter omits its label in `tokenize(_ line: String)`, but tokenizing is a transformation, not a value-preserving conversion. The fluent-usage rule restricts label omission to value-preserving conversions only. Change to `static func tokenize(line: String) -> [String]` and update the call site on line 60 from `tokenize(line)` to `tokenize(line: line)`.
+
+## Review Findings (2026-07-15 19:47)
+
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:72` — Doc comment summary contains two sentences instead of a single sentence as the rule requires. Rewrite as one sentence, or move 'A reason absent from the table...' into a separate elaboration paragraph following a blank `///` line.

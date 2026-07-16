@@ -24,10 +24,11 @@ enum ScriptMode {
     private static let executableName = "shell-demo"
 
     /// Build the shared tool and driver, then run every op line read from
-    /// standard input against them, printing each line's output. Exits non-zero
-    /// if the tool could not be built or if any op line failed to parse — the
-    /// same exit-code contract the default CLI mode honors, aggregated across
-    /// the whole script.
+    /// standard input against them, printing each line's output.
+    ///
+    /// Exits non-zero if the tool could not be built or if any op line failed to
+    /// parse — the same exit-code contract the default CLI mode honors,
+    /// aggregated across the whole script.
     static func run() async {
         do {
             let driver = try OperationCLIDriver(tool: try ShellTool.make(), executableName: executableName)

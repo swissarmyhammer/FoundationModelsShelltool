@@ -41,7 +41,9 @@ enum ChatValidationHarness {
 
     /// The scripted prompt set, in the order a human would run them: a long
     /// command and its truncation follow-ups, then a background process's
-    /// lifecycle. Each targets one shell operation.
+    /// lifecycle.
+    ///
+    /// Each targets one shell operation.
     private static let scriptedPrompts: [ScriptedPrompt] = [
         ScriptedPrompt(
             prompt: "Run the command `seq 1 100` and show me its output.",
@@ -74,8 +76,10 @@ enum ChatValidationHarness {
 
     /// Human-readable text for each `SystemLanguageModel.Availability`
     /// unavailability reason, keyed by the reason's case name
-    /// (`String(describing:)`). A reason absent from the table — including any
-    /// future `@unknown` case — falls back to `unknownAvailabilityReasonText`.
+    /// (`String(describing:)`).
+    ///
+    /// A reason absent from the table — including any future `@unknown` case —
+    /// falls back to `unknownAvailabilityReasonText`.
     private static let availabilityReasonMessages: [String: String] = [
         "deviceNotEligible": "device not eligible",
         "appleIntelligenceNotEnabled": "Apple Intelligence not enabled",

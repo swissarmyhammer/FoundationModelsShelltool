@@ -55,11 +55,12 @@ enum ShellDemoMain {
     }
 
     /// Drives `arguments` through an `OperationCLIDriver` over `ShellTool.make()`
-    /// (rooted at `<cwd>/.shell`). Prints the driver's output (the dispatched
-    /// operation's JSON, a corrective message, or ArgumentParser's own help/
-    /// usage/error text) and exits with its code — a corrective-message run
-    /// exits 0 (the operation returned rather than threw), a tool error or parse
-    /// failure non-zero.
+    /// (rooted at `<cwd>/.shell`).
+    ///
+    /// Prints the driver's output (the dispatched operation's JSON, a corrective
+    /// message, or ArgumentParser's own help/usage/error text) and exits with
+    /// its code — a corrective-message run exits 0 (the operation returned
+    /// rather than threw), a tool error or parse failure non-zero.
     ///
     /// - Parameter arguments: The command's arguments, excluding the executable
     ///   name.

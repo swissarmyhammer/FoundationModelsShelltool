@@ -188,6 +188,53 @@ import Testing
         #expect(regex.total == 2)
     }
 
+    /// `grep` must match command output text, not the `{sessionID}:{cmdID}:
+    /// {lineNumber}:` storage framing. A pattern that resembles the session id
+    /// or the numeric counters is present in every stored line's prefix, so if
+    /// the regex ran against the raw line it would spuriously match and inflate
+    /// both `results` and `total`. Output that contains no such text must
+    /// return zero matches.
+    @Test func grepDoesNotMatchLogLineMetadataPrefix() async throws {
+        let tmp = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let state = try makeState(in: tmp)
+        let id = await state.startCommand("plain")
+        // Text with no digits, no colons, and none of the session id.
+        try await state.appendLines(commandID: id, stdout: ["hello world", "plain output"])
+
+        // A fragment of the session UUID lives only in the prefix, never the text.
+        let uuidFragment = String(state.sessionID.prefix(8))
+        let bySession = try await state.grep(pattern: uuidFragment)
+        #expect(bySession.results.isEmpty)
+        #expect(bySession.total == 0)
+
+        // `\d+:` matches the `{cmdID}:{lineNumber}:` counters in the prefix only.
+        let byCounters = try await state.grep(pattern: "\\d+:")
+        #expect(byCounters.results.isEmpty)
+        #expect(byCounters.total == 0)
+    }
+
+    /// A pattern whose characters live in the metadata prefix of *every* stored
+    /// line (here the digit `1`, present in the `{cmdID}:{lineNumber}:` counters
+    /// and typically the hex session id) must match only the lines whose actual
+    /// output text contains it — proving the regex sees the parsed text, not the
+    /// framing. The single match's text is exactly the stored text, no prefix
+    /// leakage.
+    @Test func grepMatchesOutputTextWithoutPrefixLeakage() async throws {
+        let tmp = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let state = try makeState(in: tmp)
+        let id = await state.startCommand("find")
+        try await state.appendLines(
+            commandID: id,
+            stdout: ["no digits here", "has the digit 1 inside", "also plain"])
+
+        let result = try await state.grep(pattern: "1")
+        #expect(result.total == 1)
+        #expect(result.results.count == 1)
+        #expect(result.results.first?.text == "has the digit 1 inside")
+    }
+
     // MARK: - getLines ranges and unknown ids
 
     @Test func getLinesDefaultRangeReturnsEverything() async throws {

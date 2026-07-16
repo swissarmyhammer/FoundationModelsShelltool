@@ -282,8 +282,8 @@ actor ShellState {
         var results: [GrepResult] = []
         var total = 0
         for line in try readLogLines() {
-            guard ((try? regex.firstMatch(in: line)) ?? nil) != nil else { continue }
             guard let entry = Self.parseLogLine(line, sessionPrefix: sessionPrefix, commandIDFilter: commandID) else { continue }
+            guard ((try? regex.firstMatch(in: entry.text)) ?? nil) != nil else { continue }
             total += 1
             if results.count < cap {
                 results.append(entry)

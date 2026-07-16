@@ -83,8 +83,8 @@ comments:
   timestamp: 2026-07-16T02:48:00.134410+00:00
 depends_on:
 - 01KWYJ55X4ESPSXZ8AR2DFM3KB
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 8a80
 title: Docs
 ---
 ## What

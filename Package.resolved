@@ -1,10 +1,10 @@
 {
-  "originHash" : "0b29a5bc4e573c60f2b321dba4347949b315dc928baca038cd656e0ae8103b8a",
+  "originHash" : "7b6ba899758797a126ad3e07d21cfa5e295f5997fbbdd3be1902079b7f3c7a5d",
   "pins" : [
     {
       "identity" : "foundationmodelsoperationtool",
       "kind" : "remoteSourceControl",
-      "location" : "git@github.com:swissarmyhammer/FoundationModelsOperationTool.git",
+      "location" : "https://github.com/swissarmyhammer/FoundationModelsOperationTool.git",
       "state" : {
         "branch" : "main",
         "revision" : "9e1d368fc97ef76a92687cc30b6e2b24c4942cd8"

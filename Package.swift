@@ -23,7 +23,7 @@ let package = Package(
         // The `@Operation` macro, schema fusion, `OperationTool` dispatch, and
         // the ArgumentParser CLI driver. Private repo, pinned to `main`.
         .package(
-            url: "git@github.com:swissarmyhammer/FoundationModelsOperationTool.git",
+            url: "https://github.com/swissarmyhammer/FoundationModelsOperationTool.git",
             branch: "main"
         ),
         // Structured concurrency child-process API used by `ShellRunner` to

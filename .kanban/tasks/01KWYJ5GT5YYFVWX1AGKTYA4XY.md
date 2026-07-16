@@ -58,6 +58,29 @@ comments:
 
     Evidence: swift build clean (0 warnings/errors), swift test = 141 tests / 15 suites / 0 failures / 0 warnings (up from 140; +1 new guard test). Adversarial double-check: PASS. Leaving task in `doing` for /review.
   timestamp: 2026-07-16T02:33:25.592692+00:00
+- actor: claude-code
+  id: 01kxmcsxfqzpm7eezws4wz63yj
+  text: 'Iteration 3 review (complete pass, 14/14): prior fileContents-guard finding resolved. 1 NEW finding (21:36) — real correctness bug: fence-recognition asymmetry in ReadmeSnippetTests.swift:212 — opening fence uses hasPrefix("```") (3+ backticks) but closing uses `!= "```"` (exactly 3), so a 4-backtick block could be closed early by a stray 3-backtick line. Fix: make the closing check `!lines[index].hasPrefix("```")` so both sites use identical fence logic. Distinct from prior. Task stayed in `review`. Starting implement iteration.'
+  timestamp: 2026-07-16T02:41:30.615080+00:00
+- actor: claude-code
+  id: 01kxmd26mz474x62tmyyd8xnm5
+  text: |-
+    Pulled review→doing to work the single 21:36 finding (fence-recognition asymmetry).
+
+    Root fix (finding 21:36): In `ReadmeSnippets.parse` (ReadmeSnippetTests.swift), extracted a single private helper `codeFence(_ line:) -> String?` returning the leading run of backticks (>=3) or nil, and used it at BOTH the opening and closing fence sites so they can't drift. Opening: `guard let fence = codeFence(lines[index])`. Closing loop: `while ... codeFence(lines[index]) != fence` — the close must match the SAME backtick run that opened the block.
+
+    Why not the reviewer's literal one-liner (`!lines[index].hasPrefix("```")`): I verified it does NOT satisfy the required teeth test. With a plain boolean `hasPrefix("```")` at both sites, an inner 3-backtick line inside a 4-backtick block still matches the closing check and truncates the block — the exact bug. The correct root fix must capture the opening fence's backtick run and match the close to it, which is what `codeFence` does (4-backtick block closes only on a 4-backtick fence; inner ``` is kept as code). This is stronger than the finding's suggestion while still using ONE consistent rule at both sites.
+
+    Swept the parser for other opening/closing marker pairs with asymmetric logic: the only other pair is the doc-snippet markers themselves — opening `<!-- doc-snippet source="..." -->` (via sourcePath()) vs closing `<!-- /doc-snippet -->` (exact ==). Those are distinct literal tokens, not one token recognized two ways, so the exact-match close is correct — no drift bug there. The code fence was the only asymmetric-recognition case.
+
+    TDD: added `fourBacktickFenceIsNotClosedByInnerThreeBacktickLine` to ReadmeSnippetsParserTests.swift (mirrors the existing fixture-test style) — a 4-backtick block with an inner 3-backtick content line. Watched it fail RED against the old parser (returned 0 snippets — block dropped), then GREEN after the codeFence fix (1 snippet, code == "let x = 1\n```\nlet y = 2"). The 5 real README blocks still parse (```swift open / ``` close) — integration test stays green.
+
+    Evidence: `swift build` clean (0 warnings/errors, grep-verified empty), `swift test` = 142 tests / 15 suites / 0 failures / 0 warnings (up from 141; +1 teeth test). Running adversarial double-check.
+  timestamp: 2026-07-16T02:46:02.143698+00:00
+- actor: claude-code
+  id: 01kxmd5sw61gb582xgqvcvjg8v
+  text: 'Adversarial double-check: PASS. Hand-traced the full parse loop and every fixture: (1) 4-backtick block with inner 3-backtick line parses as ONE block (fence=`"````"`, inner `"```"` != fence kept as code, closes on matching `"````"`); (2) no off-by-one/OOB — every lines[index] guarded, no non-advancing loop, terminates on missing close; (3) all 5 real README doc-snippet blocks still parse (```swift open / ``` close); (4) no stale asymmetric fence logic remains (only in the docstring comment describing old behavior); (5) the doc-snippet open/close marker pair is legitimately asymmetric (open carries variable source="..." payload, close is a fixed literal — structurally different tokens, not the same "one token, two recognizers" defect), so no change warranted there. Double-check couldn''t re-run swift test (no toolchain in its env); I verified independently: swift build 0 warnings, swift test 142/142 / 15 suites / 0 failures. 21:36 finding checkbox flipped to [x]. Leaving task in `doing` for /review; not moving to review.'
+  timestamp: 2026-07-16T02:48:00.134410+00:00
 depends_on:
 - 01KWYJ55X4ESPSXZ8AR2DFM3KB
 position_column: doing
@@ -96,3 +119,7 @@ Write `README.md` (declare → fuse → session → CLI, library-style, with a r
 ## Review Findings (2026-07-15 21:18)
 
 - [x] `Tests/ShellToolTests/ReadmeSnippetTests.swift:81` — fileContents() and sourceFileLines() both read files relative to the package root, but only sourceFileLines() validates that the path stays within the root via requireWithinPackageRoot(). This inconsistency means fileContents() could be vulnerable if ever called with user-supplied input. Add the same requireWithinPackageRoot() check to fileContents() as used in sourceFileLines(), or document why the difference is intentional (e.g., fileContents is only called with hardcoded paths from docFiles).
+
+## Review Findings (2026-07-15 21:36)
+
+- [x] `Tests/ShellToolTests/ReadmeSnippetTests.swift:212` — Opening fence matched with `hasPrefix("```")` (line 206) accepts 3+ backticks, but closing fence matched with `lines[index] != "```"` (line 212) only accepts exactly 3 backticks. A doc-snippet with 4-backtick fences would match the opening but incorrectly accept the first 3-backtick line (e.g., a code line that happens to be "```") as the closing marker. Both should use the same fence-recognition logic. Change line 212 to `while index < lines.count, !lines[index].hasPrefix("```")` to consistently accept 3+ backticks as a fence delimiter at both open and close sites, matching the opening fence logic.

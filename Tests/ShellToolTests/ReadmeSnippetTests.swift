@@ -118,14 +118,14 @@ enum ReadmeSnippets {
                 continue
             }
             index += 1  // past the marker line
-            guard index < lines.count, lines[index].hasPrefix("```") else {
+            guard index < lines.count, let fence = codeFence(lines[index]) else {
                 index += 1
                 continue
             }
-            index += 1
+            index += 1  // past the opening fence
 
             var codeLines: [String] = []
-            while index < lines.count, lines[index] != "```" {
+            while index < lines.count, codeFence(lines[index]) != fence {
                 codeLines.append(lines[index])
                 index += 1
             }
@@ -138,6 +138,21 @@ enum ReadmeSnippets {
             snippets.append(Snippet(sourcePath: sourcePath, code: codeLines.joined(separator: "\n")))
         }
         return snippets
+    }
+
+    /// The leading run of backticks (three or more) that opens or closes a
+    /// fenced code block on `line`, or `nil` if `line` isn't a code fence.
+    ///
+    /// Recognising the fence by its full backtick run — rather than a bare
+    /// `hasPrefix("```")` at the open and an exact `== "```"` at the close — lets
+    /// `parse(_:)` match a closing fence to the *same* run that opened the block:
+    /// a block opened with a four-backtick fence closes only on another
+    /// four-backtick fence, so an inner three-backtick line is kept as code
+    /// instead of truncating the block early. Using this single helper at both
+    /// the opening and closing sites keeps their fence recognition from drifting.
+    private static func codeFence(_ line: String) -> String? {
+        let backticks = line.prefix { $0 == "`" }
+        return backticks.count >= 3 ? String(backticks) : nil
     }
 
     /// The `source="..."` value from a `<!-- doc-snippet source="..." -->` line,

@@ -56,6 +56,23 @@ struct ReadmeSnippetsParserTests {
         #expect(try ReadmeSnippets.parse(readme).isEmpty)
     }
 
+    @Test("a four-backtick fence is not closed early by an inner three-backtick line")
+    func fourBacktickFenceIsNotClosedByInnerThreeBacktickLine() throws {
+        let readme = """
+            <!-- doc-snippet source="Sources/ShellTool/ShellTool.swift" -->
+            ````swift
+            let x = 1
+            ```
+            let y = 2
+            ````
+            <!-- /doc-snippet -->
+            """
+        let snippets = try ReadmeSnippets.parse(readme)
+        #expect(snippets.count == 1)
+        #expect(snippets.first?.sourcePath == "Sources/ShellTool/ShellTool.swift")
+        #expect(snippets.first?.code == "let x = 1\n```\nlet y = 2")
+    }
+
     @Test("a well-formed block after a malformed one is still parsed")
     func wellFormedBlockAfterMalformedOneIsStillParsed() throws {
         let readme = """

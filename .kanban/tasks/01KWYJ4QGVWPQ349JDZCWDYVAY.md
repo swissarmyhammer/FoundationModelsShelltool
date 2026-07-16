@@ -95,8 +95,8 @@ comments:
   timestamp: 2026-07-15T23:34:43.082358+00:00
 depends_on:
 - 01KWYJAWZQ8PN9031D9FCWG2N8
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '8880'
 title: CLI driver wiring
 ---
 ## What

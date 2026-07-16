@@ -70,6 +70,14 @@ let package = Package(
             name: "ShellToolTests",
             dependencies: [
                 "ShellTool",
+                // The example integration tests invoke the built `shell-demo`
+                // executable as a subprocess (its `--script` mode over real
+                // stdin). Declaring the executable as a dependency makes
+                // `swift test` build it first, so the binary is present next to
+                // the test bundle for the subprocess to launch — no code from
+                // the executable is imported (its `@main` entry point stays the
+                // process's, not the test's).
+                "shell-demo",
                 // The CLI convergence tests drive the fused `shell` tool through
                 // an `OperationCLIDriver` (the same driver the `shell-demo`
                 // executable wires up) and assert its argv path converges with

@@ -4,23 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    # macOS 26 runner: the package targets `.macOS(.v26)` only and spawns
-    # child processes via Subprocess/`/bin/sh`, so it cannot build or run on
-    # Linux or older macOS images.
-    runs-on: macos-26
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Swift version
-        run: swift --version
-
-      - name: Build
-        run: swift build
-
-      - name: Test
-        run: swift test
+  unit:
+    uses: swissarmyhammer/workflows/.github/workflows/swift-ci.yaml@main

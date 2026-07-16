@@ -41,6 +41,13 @@ struct ReadmeSnippetTests {
         }
     }
 
+    @Test("a doc-file path that escapes the package root is rejected")
+    func docFilePathOutsideThePackageRootIsRejected() {
+        #expect(throws: (any Error).self) {
+            _ = try fileContents(relativePath: "../../../../../../etc/passwd")
+        }
+    }
+
     @Test("the README documents all four declare/fuse/session/CLI stages from real source")
     func readmeDocumentsAllFourStages() throws {
         var sourcePaths: Set<String> = []
@@ -60,17 +67,16 @@ struct ReadmeSnippetTests {
     }
 
     private func fileContents(relativePath: String) throws -> String {
-        try String(contentsOf: PackageRootValidation.packageRoot().appendingPathComponent(relativePath), encoding: .utf8)
-    }
-
-    private func sourceFileLines(relativePath: String) throws -> [String] {
         let root = PackageRootValidation.packageRoot()
         let fileURL = root.appendingPathComponent(relativePath)
         try PackageRootValidation.requireWithinPackageRoot(fileURL, root: root) {
             PathEscapesPackageRoot(path: $0)
         }
-        let contents = try String(contentsOf: fileURL, encoding: .utf8)
-        return contents.components(separatedBy: "\n")
+        return try String(contentsOf: fileURL, encoding: .utf8)
+    }
+
+    private func sourceFileLines(relativePath: String) throws -> [String] {
+        try fileContents(relativePath: relativePath).components(separatedBy: "\n")
     }
 
     /// A source path cited by a README `doc-snippet` marker resolved outside

@@ -41,6 +41,23 @@ comments:
 
     All 3 review-finding checkboxes flipped to [x]. Leaving task in `doing` for /review. Not moving to review.
   timestamp: 2026-07-16T02:15:10.400583+00:00
+- actor: claude-code
+  id: 01kxmc1mdkc372nxdjc05y81jn
+  text: 'Iteration 2 review (complete pass, 14/14): 3 prior findings resolved (packageRoot consolidated, closing-marker validation added). 1 NEW recorded finding (21:18) — ReadmeSnippetTests.swift:81 `fileContents()` reads relative to package root but, unlike its sibling `sourceFileLines()`, omits the `requireWithinPackageRoot()` guard (consistency/safety gap, line touched this commit). Fix: add the same guard (or document why it''s safe — but adding the guard is the clean root fix). (Reviewer dropped 3 missing-`- Returns:`/re-docstring findings on test helpers per the test-refactor exception.) Task stayed in `review`. Starting implement iteration.'
+  timestamp: 2026-07-16T02:28:14.899414+00:00
+- actor: claude-code
+  id: 01kxmcb3trz8kz6drsg8faxnnw
+  text: |-
+    Pulled review→doing to work the single 21:18 finding.
+
+    Root fix (finding 21:18): Added the `requireWithinPackageRoot()` guard to `fileContents()` in ReadmeSnippetTests.swift so it now matches its sibling `sourceFileLines()` — the guard runs (throws PathEscapesPackageRoot on a `..`-escape) BEFORE the `String(contentsOf:)` read. To avoid re-introducing a duplicated guard block (the same class of duplication the 21:01 review flagged for packageRoot), refactored `sourceFileLines()` to delegate to the now-guarded `fileContents()` and split on newlines — single guarded reader, one line-splitter on top. No behavioral change to sourceFileLines.
+
+    TDD: added `docFilePathOutsideThePackageRootIsRejected()` mirroring the existing `sourcePathOutsideThePackageRootIsRejected()`. Watched it fail RED against the unguarded fileContents (read /etc/passwd, no throw → expectation failed), then GREEN after adding the guard.
+
+    Sweep for recurrences: checked all 16 files under Tests/. Only three reference the package root — PackageRootValidation.swift (the guard), DocCoverageTests.swift (already guarded), ReadmeSnippetTests.swift (now guarded). Every other appendingPathComponent/String(contentsOf:) resolves a temp dir (FileManager.temporaryDirectory + UUID), a Bundle URL, an absolute path, or the .build/debug executable — none are package-root-relative, so none need the guard. Zero remaining recurrences.
+
+    Evidence: swift build clean (0 warnings/errors), swift test = 141 tests / 15 suites / 0 failures / 0 warnings (up from 140; +1 new guard test). Adversarial double-check: PASS. Leaving task in `doing` for /review.
+  timestamp: 2026-07-16T02:33:25.592692+00:00
 depends_on:
 - 01KWYJ55X4ESPSXZ8AR2DFM3KB
 position_column: doing
@@ -75,3 +92,7 @@ Write `README.md` (declare → fuse → session → CLI, library-style, with a r
 - [x] `Tests/ShellToolTests/DocCoverageTests.swift:224` — The `packageRoot()` function is reimplemented identically in ReadmeSnippetTests.swift. Both files need to resolve the package root from their test file path, yet each defines the same logic separately. Extract `packageRoot()` to the shared `PackageRootValidation.swift` module (which already serves as a home for path-related test utilities). Both test files can then call a shared implementation, reducing duplication and ensuring consistency.
 - [x] `Tests/ShellToolTests/ReadmeSnippetTests.swift:96` — The `packageRoot()` function is reimplemented identically in DocCoverageTests.swift. Both files need to resolve the package root from their test file path, yet each defines the same logic separately. Extract `packageRoot()` to the shared `PackageRootValidation.swift` module (which already serves as a home for path-related test utilities). Both test files can then call a shared implementation, reducing duplication and ensuring consistency.
 - [x] `Tests/ShellToolTests/ReadmeSnippetTests.swift:157` — The docstring specifies that a well-formed block has both an opening marker `<!-- doc-snippet source="PATH" -->` and a closing marker `<!-- /doc-snippet -->`. The opening marker is validated via `sourcePath()`, and code fences are validated, but the closing marker is never validated. Blocks without closing markers are silently accepted, creating an inconsistency between the stated format specification and the parsing implementation. After line 155 (incrementing past the closing fence), validate that the next line is `<!-- /doc-snippet -->` before accepting the snippet. If the closing marker is absent, either skip the block (consistent with 'Malformed blocks … are skipped') or raise an error to enforce the documented format.
+
+## Review Findings (2026-07-15 21:18)
+
+- [x] `Tests/ShellToolTests/ReadmeSnippetTests.swift:81` — fileContents() and sourceFileLines() both read files relative to the package root, but only sourceFileLines() validates that the path stays within the root via requireWithinPackageRoot(). This inconsistency means fileContents() could be vulnerable if ever called with user-supplied input. Add the same requireWithinPackageRoot() check to fileContents() as used in sourceFileLines(), or document why the difference is intentional (e.g., fileContents is only called with hardcoded paths from docFiles).

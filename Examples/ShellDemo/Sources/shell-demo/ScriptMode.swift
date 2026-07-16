@@ -66,7 +66,7 @@ enum ScriptMode {
         for rawLine in input.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             if line.isEmpty || line.hasPrefix("#") { continue }
-            let result = await driver.run(arguments: tokenize(line))
+            let result = await driver.run(arguments: tokenize(line: line))
             if !result.output.isEmpty {
                 emit(result.output)
             }
@@ -88,7 +88,7 @@ enum ScriptMode {
     ///
     /// - Parameter line: One op line (already trimmed and non-comment).
     /// - Returns: The argv tokens for `OperationCLIDriver.run(arguments:)`.
-    static func tokenize(_ line: String) -> [String] {
+    static func tokenize(line: String) -> [String] {
         var tokens: [String] = []
         var current = ""
         var inWord = false

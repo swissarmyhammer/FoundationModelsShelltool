@@ -62,6 +62,29 @@ comments:
 
     Leaving task in `doing` per /implement (not moving to review).
   timestamp: 2026-07-16T00:31:06.994769+00:00
+- actor: claude-code
+  id: 01kxm5xk41vq04qhkcd36h0z9k
+  text: 'Iteration 3 review (complete pass, 14/14): prior dup-literal finding resolved. 2 NEW findings (19:36) — parameter-label omissions: ChatValidationHarness.swift:130 `evaluateScriptedPrompt(_ scripted:)` and ScriptMode.swift:68 `tokenize(_ line:)` should use explicit first-parameter labels (they''re transformations, not value-preserving conversions); update call sites too. Distinct from prior. Task stayed in `review`. Starting implement iteration.'
+  timestamp: 2026-07-16T00:41:11.041267+00:00
+- actor: claude-code
+  id: 01kxm641jg8v2p6jkfm7dwm4r6
+  text: |-
+    Iteration 4 (implement): pulled from review back to doing to work the 2 review findings (19:36) — parameter-label omissions. Both fixed and both checkboxes flipped to [x].
+
+    Signatures + call sites changed:
+    (1) ChatValidationHarness.swift — `evaluateScriptedPrompt(_ scripted: ScriptedPrompt, session:, toolName:)` -> `evaluateScriptedPrompt(scripted: ScriptedPrompt, session:, toolName:)`; sole call site (the `where await ...` clause in measureOpCallAccuracy) updated to `evaluateScriptedPrompt(scripted: scripted, session: session, toolName: toolName)`. A complex async prompt evaluation, not a value-preserving conversion, so the explicit label is warranted.
+    (2) ScriptMode.swift — `tokenize(_ line: String) -> [String]` -> `tokenize(line: String) -> [String]`; sole call site updated to `driver.run(arguments: tokenize(line: line))`. Tokenizing (String -> [String] argv) is a transformation, so the explicit label is warranted.
+
+    Root-fix sweep across all three shell-demo sources (main.swift, ScriptMode.swift, ChatValidationHarness.swift) for other `_` first-parameter labels: grep for single-line `func ...(_ ` and multi-line `^\s+_ name:` returns zero matches. No other transformation function used an omitted first label. Deliberately LEFT: `lastToolCallOp(in transcript:, toolName:)` — its first argument uses the explicit preposition label `in:` (idiomatic fluent phrasing, `lastToolCallOp(in: transcript)`), which is a genuine value-locating access, not an omitted `_`, so it correctly stays. No genuine value-preserving conversion (init/make-style) exists in these files to over-correct.
+
+    No external callers: repo-wide grep confirms both symbols have exactly one definition + one call site in project sources; all other hits are vendored `.build/checkouts/` (a separate NotesTool package and swift-syntax's Lexer.tokenize), unrelated. No test target references either symbol, so no test changes needed.
+
+    really-done: verification commands green — `swift build` exit 0 (shell-demo compiles cleanly, no warnings); `swift test` = 117 tests in 11 suites, 0 failures, 0 warnings. No swift-format reflow; 4-space style preserved; diff confined to the 2 signatures + their 2 call sites.
+
+    Adversarial double-check: PASS. Confirmed both call sites updated consistently, no other callers in the repo (including tests), and the sweep is complete and correct (no miss, no over-correction).
+
+    Leaving task in `doing` per /implement (not moving to review).
+  timestamp: 2026-07-16T00:44:42.448055+00:00
 depends_on:
 - 01KWYJAWZQ8PN9031D9FCWG2N8
 - 01KWYJ4QGVWPQ349JDZCWDYVAY
@@ -99,3 +122,8 @@ Complete the `shell-demo` executable (`Examples/ShellDemo/Sources/shell-demo/`) 
 ## Review Findings (2026-07-15 19:19)
 
 - [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:93` — The phrase 'skipping live validation.' is repeated in two print statements (lines 93 and 96) and should be extracted as a named constant to avoid repetition and ensure changes are made in one place. Extract as a named constant: `private static let skipValidationMessage = \"skipping live validation.\"` and interpolate it in both print statements.
+
+## Review Findings (2026-07-15 19:36)
+
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:130` — First parameter omits its label in `evaluateScriptedPrompt(_ scripted:...)`, but this function performs a complex evaluation, not a value-preserving conversion. The fluent-usage rule restricts label omission strictly to value-preserving conversions. Change `(_ scripted: ScriptedPrompt,` to `(scripted: ScriptedPrompt,` and update the call site on line 126 from `evaluateScriptedPrompt(scripted, ...)` to `evaluateScriptedPrompt(scripted: scripted, ...)`.
+- [x] `Examples/ShellDemo/Sources/shell-demo/ScriptMode.swift:68` — First parameter omits its label in `tokenize(_ line: String)`, but tokenizing is a transformation, not a value-preserving conversion. The fluent-usage rule restricts label omission to value-preserving conversions only. Change to `static func tokenize(line: String) -> [String]` and update the call site on line 60 from `tokenize(line)` to `tokenize(line: line)`.

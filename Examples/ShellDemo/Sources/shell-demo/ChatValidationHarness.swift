@@ -154,7 +154,7 @@ enum ChatValidationHarness {
     ) async -> (matched: Int, total: Int) {
         var matched = 0
         for scripted in scriptedPrompts
-        where await evaluateScriptedPrompt(scripted, session: session, toolName: toolName) {
+        where await evaluateScriptedPrompt(scripted: scripted, session: session, toolName: toolName) {
             matched += 1
         }
         return (matched, scriptedPrompts.count)
@@ -169,7 +169,7 @@ enum ChatValidationHarness {
     ///   - toolName: The fused tool's name, to find its call in the transcript.
     /// - Returns: Whether the dispatched op matched `scripted.expectedOp`.
     private static func evaluateScriptedPrompt(
-        _ scripted: ScriptedPrompt,
+        scripted: ScriptedPrompt,
         session: LanguageModelSession,
         toolName: String
     ) async -> Bool {

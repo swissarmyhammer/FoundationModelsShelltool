@@ -15,21 +15,27 @@ import Testing
 /// a corrective string, not a thrown fatal error), per the task's TDD note.
 @Suite struct HistoryOpsTests {
 
+    /// Build a fresh `ShellContext` rooted at a unique temp `.shell` store, with
+    /// a builtin-only policy (no `~/.shell` or project overlay), so every test is
+    /// isolated and deterministic.
+    private func makeContext() throws -> ShellContext {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shelltool-test-\(UUID().uuidString)", isDirectory: true)
+        let state = try ShellState(preferredDirectory: directory)
+        let policy = ShellPolicy(userConfigURL: nil, projectConfigURL: nil, warn: { _ in })
+        return ShellContext(state: state, policy: policy)
+    }
+
     /// Build a fresh tool over a `ShellContext` rooted at a unique temp `.shell`
     /// store, with a builtin-only policy (no `~/.shell` or project overlay), so
     /// every test is isolated and deterministic. `execute command` is fused in
     /// alongside the two history ops so a test can produce output and then
     /// grep / get-lines the same `ShellState`.
     private func makeTool() throws -> OperationTool<ShellContext> {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("shelltool-test-\(UUID().uuidString)", isDirectory: true)
-        let state = try ShellState(preferredDirectory: directory)
-        let policy = ShellPolicy(userConfigURL: nil, projectConfigURL: nil, warn: { _ in })
-        let context = ShellContext(state: state, policy: policy)
         return try OperationTool(
             name: "shell",
             description: "Run shell commands.",
-            context: context,
+            context: try makeContext(),
             operations: [
                 AnyOperation(ExecuteCommand.self),
                 AnyOperation(GrepHistory.self),
@@ -76,6 +82,36 @@ import Testing
         // A corrective message, not a structured match result.
         #expect(!response.contains("\"total\""))
         #expect(!response.contains("\"shown\""))
+    }
+
+    /// Drives `GrepHistory.execute(in:)` directly — the op's own execute path,
+    /// against a real `ShellContext`/`ShellState` — with a syntactically invalid
+    /// regex. This closes the round-trip the `tool.call` test only sees through
+    /// the encoded string: the producer (`ShellState.grep`) throws
+    /// `ShellStateError.invalidRegex`, and the consuming catch must reshape it
+    /// into a `.corrective` `GrepOutput` rather than let the throw escape. The
+    /// assertion is on the returned enum case and its message text, so it fails
+    /// if `execute` threw (the `try` propagates) or returned `.matches` (the
+    /// `guard` records an issue).
+    @Test func grepHistoryExecuteReturnsCorrectiveGrepOutputForInvalidRegex() async throws {
+        let context = try makeContext()
+        // An unbalanced bracket class is not a valid regex; `literal: false`
+        // means it is compiled as a pattern, so compilation fails.
+        let operation = try GrepHistory(
+            GeneratedContent(properties: [
+                "pattern": "[invalid", "literal": false,
+            ]))
+
+        let output = try await operation.execute(in: context)
+
+        guard case .corrective(let message) = output else {
+            Issue.record("expected a .corrective GrepOutput, got \(output)")
+            return
+        }
+        // The corrective carries the exact `ShellStateError.invalidRegex`
+        // description: "Invalid regex pattern \"<pattern>\": <underlying>".
+        #expect(message.contains("Invalid regex pattern"))
+        #expect(message.contains("[invalid"))
     }
 
     // MARK: - grep history: literal matches exact text, not regex syntax

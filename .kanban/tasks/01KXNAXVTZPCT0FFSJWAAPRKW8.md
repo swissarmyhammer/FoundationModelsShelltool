@@ -65,13 +65,30 @@ comments:
 
     Verified: `swift test` → 146 tests in 15 suites passed, 0 failures. `swift build --build-tests` → exit 0, 0 warnings. No leaked subprocesses (pgrep for stray sleeps → none). Existing grep tests unmodified and green. All three 07:18 checkboxes flipped to [x]. Task left in doing for /review.
   timestamp: 2026-07-16T12:30:34.363775+00:00
+- actor: claude-code
+  id: 01kxnf4q5bwa6jag4qkew9bt9j
+  text: 'Iteration 4 review (complete pass, 14/14; refuted the 3 prior findings — docs + Sendable invalidRegex resolved). 1 NEW finding (07:34) — test-coverage gap: GrepHistory.execute()''s invalid-regex catch (GrepHistory.swift:65) is only tested on the throwing side; no test drives the full producer→consumer path (call execute() with an invalid regex, assert it returns a `.corrective` GrepOutput with the correctly formatted message). Add-a-test finding, in scope. Task stayed in `review`. Starting implement iteration.'
+  timestamp: 2026-07-16T12:41:36.171043+00:00
+- actor: claude-code
+  id: 01kxnfdnyasqy32va5pmcf85ac
+  text: |-
+    Iteration 5 implement — resolved review finding (07:34), the GrepHistory producer→consumer round-trip coverage gap. Pulled task from review back to doing.
+
+    Added test `grepHistoryExecuteReturnsCorrectiveGrepOutputForInvalidRegex` to Tests/ShellToolTests/HistoryOpsTests.swift. It drives `GrepHistory.execute(in:)` DIRECTLY (not via tool.call → String): constructs the op via its Generable init `try GrepHistory(GeneratedContent(properties: ["pattern": "[invalid", "literal": false]))` against a real ShellContext/ShellState, calls `try await operation.execute(in: context)`, and asserts with `guard case .corrective(let message)` that the returned GrepOutput enum is the `.corrective` case (records an Issue on `.matches`), with `message.contains("Invalid regex pattern")` and `message.contains("[invalid")`. This closes the round-trip: producer ShellState.grep throws .invalidRegex, consumer catch reshapes it to .corrective — asserted on the actual enum value, not just the encoded string the pre-existing tool.call test sees.
+
+    Refactored the suite helper: extracted `makeContext() -> ShellContext` (the new direct-execute test needs a context, which makeTool previously hid) and made `makeTool()` call it — behavior-preserving, no duplication.
+
+    TEETH verified (red-green-red): temporarily changed GrepHistory's catch to rethrow instead of returning .corrective → new test FAILED (1 issue). Reverted; GrepHistory.swift byte-identical to original. Test passes green.
+
+    Verified: `swift test` → 147 tests in 15 suites passed (was 146), 0 failures. `swift build --build-tests` → 0 warnings, 0 errors. No stray subprocesses (pgrep sleep clean). Kept 4-space style; no repo-wide swift-format reflow. Finding checkbox flipped to [x]. Task left in doing for /review.
+  timestamp: 2026-07-16T12:46:29.834932+00:00
 position_column: doing
 position_ordinal: '80'
 title: Fix grep matching against log-line metadata prefix
 ---
 ## What
 
-`ShellState.grep` (Sources/ShellTool/ShellState.swift, `grep(pattern:literal:commandID:limit:)`) runs the regex against the **raw stored log line** — `regex.firstMatch(in: line)` executes before `parseLogLine` strips the `{sessionID}:{cmdID}:{lineNumber}:` prefix. A pattern like `\\\\\\\\d+:`, a UUID/hex fragment, or anything resembling the session id or line counters matches the metadata instead of command output, inflating both `results` and `total`. The Rust reference greps command output text, not storage framing.
+`ShellState.grep` (Sources/ShellTool/ShellState.swift, `grep(pattern:literal:commandID:limit:)`) runs the regex against the **raw stored log line** — `regex.firstMatch(in: line)` executes before `parseLogLine` strips the `{sessionID}:{cmdID}:{lineNumber}:` prefix. A pattern like `\\\\\\\\\\\\\\\\d+:`, a UUID/hex fragment, or anything resembling the session id or line counters matches the metadata instead of command output, inflating both `results` and `total`. The Rust reference greps command output text, not storage framing.
 
 Fix: reorder the scan loop so `parseLogLine(_:sessionPrefix:commandIDFilter:)` runs first and the regex is applied to the parsed entry's `text` only (the trailing-whitespace-trimmed text, matching Rust's `trim_end` semantics already implemented in `parseLogLine`). Session filtering, `commandID` filtering, `limit` cap, and the independent `total` count are unchanged. `literal` escaping via `NSRegularExpression.escapedPattern` is unchanged.
 
@@ -80,12 +97,12 @@ Files:
 - Tests/ShellToolTests/ShellStateTests.swift (regression tests, alongside the existing `// MARK: - grep` group)
 
 ## Acceptance Criteria
-- [ ] A pattern that matches only the metadata prefix (e.g. a fragment of the session UUID, or `^\\\\\\\\d+:`) returns zero matches and `total == 0` when no command output contains it
+- [ ] A pattern that matches only the metadata prefix (e.g. a fragment of the session UUID, or `^\\\\\\\\\\\\\\\\d+:`) returns zero matches and `total == 0` when no command output contains it
 - [ ] A pattern matching real output text still returns the same matches, `shown`/`total` split, and per-session/`commandID` filtering as before
 - [ ] All existing grep tests (`grepRespectsLimitAndReportsTotalSeparately`, `grepLiteralTreatsPatternAsPlainText`, `grepTrimsTrailingWhitespaceFromResultText`, per-session invisibility) still pass unmodified
 
 ## Tests
-- [ ] New regression test in Tests/ShellToolTests/ShellStateTests.swift: store lines whose text does NOT contain digits-colon or the session id; grep for a session-UUID fragment and for a `\\\\\\\\d+:`-style pattern; assert `results.isEmpty` and `total == 0` (fails before the fix — today the prefix matches)
+- [ ] New regression test in Tests/ShellToolTests/ShellStateTests.swift: store lines whose text does NOT contain digits-colon or the session id; grep for a session-UUID fragment and for a `\\\\\\\\\\\\\\\\d+:`-style pattern; assert `results.isEmpty` and `total == 0` (fails before the fix — today the prefix matches)
 - [ ] New test: grep for a pattern present in output text; assert match text equals the stored text (no prefix leakage in behavior)
 - [ ] `swift test` — full suite green (142+ tests, 0 failures)
 
@@ -98,7 +115,7 @@ Files:
 
 ## Review Findings (2026-07-16 07:04)
 
-- [x] `Sources/ShellTool/ShellState.swift:145` — The log format separator ':' is hardcoded inline in this format string; the same literal appears on lines 227, 254, and 264. This should be a single named constant. Define `private static let fieldSeparator = ":"` and use it to construct the format string on this line.
+- [x] `Sources/ShellTool/ShellState.swift:145` — The log format separator ':' is hardcoded inline in this format string; the same literal appears on lines 227, 254, and 264. This should be a single named constant. Define `private static let fieldSeparator = \":\"` and use it to construct the format string on this line.
 - [x] `Sources/ShellTool/ShellState.swift:227` — The log format separator ':' is hardcoded inline; the same literal appears on lines 145, 254, and 264. It should be a named constant. Replace the hardcoded ':' with a named constant `fieldSeparator`.
 - [x] `Sources/ShellTool/ShellState.swift:237` — The log format separator ':' is hardcoded inline in this firstIndex call; the same literal appears on lines 145, 209, 227, 254, and 264. It should be a named constant. Replace the hardcoded ':' with a named constant `fieldSeparator`.
 - [x] `Sources/ShellTool/ShellState.swift:254` — The log format separator ':' is hardcoded inline; the same literal appears on lines 145, 227, and 264. It should be a named constant. Replace the hardcoded ':' with a named constant `fieldSeparator`.
@@ -106,5 +123,9 @@ Files:
 ## Review Findings (2026-07-16 07:18)
 
 - [x] `Sources/ShellTool/ShellState.swift:31` — Public enum case `running` lacks documentation comment. ShellStateError enum (lines 82–88) documents all its cases, establishing a codebase precedent for documenting enum cases. Add documentation: `/// The command is currently executing.`.
-- [x] `Sources/ShellTool/ShellState.swift:34` — Public enum case `timedOut` lacks documentation explaining its non-obvious on-the-wire representation (raw value "timed_out"). ShellStateError enum (lines 82–88) documents all its cases, establishing a codebase precedent. Add documentation: `/// The command exceeded its timeout (on-the-wire: "timed_out").`.
+- [x] `Sources/ShellTool/ShellState.swift:34` — Public enum case `timedOut` lacks documentation explaining its non-obvious on-the-wire representation (raw value \"timed_out\"). ShellStateError enum (lines 82–88) documents all its cases, establishing a codebase precedent. Add documentation: `/// The command exceeded its timeout (on-the-wire: \"timed_out\").`.
 - [x] `Sources/ShellTool/ShellState.swift:73` — ShellStateError is not Sendable, but it is thrown from actor methods (appendLines, grep, killProcess, commandIndex) and crosses actor boundaries when awaited. The enum's `invalidRegex` case contains `underlying: any Error`, which is not Sendable and prevents the enum from being marked Sendable. Either store the error message as a String instead of `any Error` (making ShellStateError Sendable), or use @unchecked Sendable with a comment explaining the safety invariant. Prefer the String approach: `case invalidRegex(pattern: String, underlyingMessage: String)`.
+
+## Review Findings (2026-07-16 07:34)
+
+- [x] `Sources/ShellTool/Operations/GrepHistory.swift:65` — GrepHistory.execute() was modified to catch the new ShellStateError.invalidRegex format, but the consuming side (the catch handler) is not tested in integration with the producing side (ShellState.grep throwing the error). The change updated both the throwing and catching code, but test coverage only exercises the throwing side. Add a test that calls GrepHistory.execute() with an invalid regex pattern and verifies it returns a .corrective GrepOutput with the correctly formatted error message, completing the round-trip through both producer and consumer.

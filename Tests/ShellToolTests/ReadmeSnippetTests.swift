@@ -1,24 +1,25 @@
 import Foundation
 import Testing
 
-/// Verifies the "Docs" task's "README example compiles against the actual
-/// package" acceptance criterion: every
+/// Verifies the "Docs" task's "example compiles against the actual package"
+/// acceptance criterion: every
 /// `<!-- doc-snippet source="..." --> ``` ... ``` <!-- /doc-snippet -->` code
-/// block in the repo root's `README.md` is a genuine, contiguous excerpt of the
+/// block in the repo's doc-bearing markdown — the landing-page `README.md` and
+/// the `docs/USAGE.md` guide it links — is a genuine, contiguous excerpt of the
 /// source file it cites, not hand-written pseudocode that could drift out of
 /// sync with what actually compiles. The declare → fuse → session → CLI
 /// walkthrough is cited from the real `Sources/ShellTool` library and the
-/// `Examples/ShellDemo` executable, so `swift test` fails the moment a README
-/// snippet no longer matches the code it claims to show.
+/// `Examples/ShellDemo` executable, so `swift test` fails the moment a
+/// documented snippet no longer matches the code it claims to show.
 ///
 /// Mirrors the upstream `FoundationModelsOperationTool`'s
-/// `ReadmeSnippetTests.swift` mechanism, scoped to this package's single
-/// `README.md` (which carries all four stages inline, rather than splitting a
-/// separate guide out).
+/// `ReadmeSnippetTests.swift` mechanism: the README is the minimal landing page
+/// (one representative snippet) and `docs/USAGE.md` carries the full four-stage
+/// walkthrough.
 @Suite("README code-snippet provenance")
 struct ReadmeSnippetTests {
     /// The doc-snippet-bearing markdown files, relative to the package root.
-    private static let docFiles = ["README.md"]
+    private static let docFiles = ["README.md", "docs/USAGE.md"]
 
     @Test("every doc-snippet code block is a real, contiguous excerpt of its cited source file", arguments: docFiles)
     func everySnippetIsARealContiguousExcerptOfItsSource(docFile: String) throws {
@@ -48,8 +49,8 @@ struct ReadmeSnippetTests {
         }
     }
 
-    @Test("the README documents all four declare/fuse/session/CLI stages from real source")
-    func readmeDocumentsAllFourStages() throws {
+    @Test("the docs document all four declare/fuse/session/CLI stages from real source")
+    func docsDocumentAllFourStages() throws {
         var sourcePaths: Set<String> = []
         for docFile in Self.docFiles {
             let snippets = try ReadmeSnippets.parse(fileContents(relativePath: docFile))

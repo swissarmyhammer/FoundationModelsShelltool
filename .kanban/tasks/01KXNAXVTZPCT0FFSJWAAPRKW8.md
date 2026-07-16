@@ -22,13 +22,21 @@ comments:
 
     FINAL: `swift test` → 144 tests in 15 suites passed, 0 failures, 0 warnings/errors. No leaked subprocesses (pgrep found no stray sleeps). All acceptance criteria and existing grep tests (grepRespectsLimitAndReportsTotalSeparately, grepLiteralTreatsPatternAsPlainText, grepTrimsTrailingWhitespaceFromResultText, linesFromAnotherSessionAreInvisible) pass unmodified. Task left in doing for /review.
   timestamp: 2026-07-16T11:40:46.101031+00:00
+- actor: claude-code
+  id: 01kxncpssfsmsk972fnwd0ennv
+  text: 'Iteration 1 review (complete pass, 14/14; 25 refuted): grep fix verified resolved (metadata-only patterns → 0/total 0; real matches unchanged; all pre-existing grep tests green). 1 NEW recorded finding (06:43) — ShellState.swift:241 `getCommandIndex` has a needless `get` prefix → rename to `commandIndex` (Swift API naming). (Reviewer dropped 2 test-local `tmp`→`tempDirectory` renames on pre-existing tests per the test-refactor exception.) Task stayed in `review`. Starting implement iteration.'
+  timestamp: 2026-07-16T11:59:02.959802+00:00
+- actor: claude-code
+  id: 01kxncwr2zxpda75z6cayaxdpn
+  text: 'Review finding (06:43) resolved. Renamed private `getCommandIndex(commandID:)` → `commandIndex(commandID:)` in Sources/ShellTool/ShellState.swift and updated both call sites (`appendLines`, `killProcess`). It was private with exactly 3 occurrences; grep confirms zero `getCommandIndex` remain in Sources/ or Tests/. Deliberately left `getLines(commandID:start:end:)` unrenamed — it is public API mirroring the sah `get lines` op string (per task instruction). Audited all ShellState methods: the only private get/fetch-prefixed value accessor was getCommandIndex; the rest (readLogLines, parseLogLine, resolveDirectory, prepareDirectory) are action verbs, not accessors. `swift test`: 144 tests in 15 suites passed, 0 failures, 0 warnings, exit 0. No leaked subprocesses. Adversarial double-check: PASS. Finding checkbox flipped to [x]. Task left in doing for /review.'
+  timestamp: 2026-07-16T12:02:17.823233+00:00
 position_column: doing
 position_ordinal: '80'
 title: Fix grep matching against log-line metadata prefix
 ---
 ## What
 
-`ShellState.grep` (Sources/ShellTool/ShellState.swift, `grep(pattern:literal:commandID:limit:)`) runs the regex against the **raw stored log line** — `regex.firstMatch(in: line)` executes before `parseLogLine` strips the `{sessionID}:{cmdID}:{lineNumber}:` prefix. A pattern like `\d+:`, a UUID/hex fragment, or anything resembling the session id or line counters matches the metadata instead of command output, inflating both `results` and `total`. The Rust reference greps command output text, not storage framing.
+`ShellState.grep` (Sources/ShellTool/ShellState.swift, `grep(pattern:literal:commandID:limit:)`) runs the regex against the **raw stored log line** — `regex.firstMatch(in: line)` executes before `parseLogLine` strips the `{sessionID}:{cmdID}:{lineNumber}:` prefix. A pattern like `\\d+:`, a UUID/hex fragment, or anything resembling the session id or line counters matches the metadata instead of command output, inflating both `results` and `total`. The Rust reference greps command output text, not storage framing.
 
 Fix: reorder the scan loop so `parseLogLine(_:sessionPrefix:commandIDFilter:)` runs first and the regex is applied to the parsed entry's `text` only (the trailing-whitespace-trimmed text, matching Rust's `trim_end` semantics already implemented in `parseLogLine`). Session filtering, `commandID` filtering, `limit` cap, and the independent `total` count are unchanged. `literal` escaping via `NSRegularExpression.escapedPattern` is unchanged.
 
@@ -37,14 +45,18 @@ Files:
 - Tests/ShellToolTests/ShellStateTests.swift (regression tests, alongside the existing `// MARK: - grep` group)
 
 ## Acceptance Criteria
-- [ ] A pattern that matches only the metadata prefix (e.g. a fragment of the session UUID, or `^\d+:`) returns zero matches and `total == 0` when no command output contains it
+- [ ] A pattern that matches only the metadata prefix (e.g. a fragment of the session UUID, or `^\\d+:`) returns zero matches and `total == 0` when no command output contains it
 - [ ] A pattern matching real output text still returns the same matches, `shown`/`total` split, and per-session/`commandID` filtering as before
 - [ ] All existing grep tests (`grepRespectsLimitAndReportsTotalSeparately`, `grepLiteralTreatsPatternAsPlainText`, `grepTrimsTrailingWhitespaceFromResultText`, per-session invisibility) still pass unmodified
 
 ## Tests
-- [ ] New regression test in Tests/ShellToolTests/ShellStateTests.swift: store lines whose text does NOT contain digits-colon or the session id; grep for a session-UUID fragment and for a `\d+:`-style pattern; assert `results.isEmpty` and `total == 0` (fails before the fix — today the prefix matches)
+- [ ] New regression test in Tests/ShellToolTests/ShellStateTests.swift: store lines whose text does NOT contain digits-colon or the session id; grep for a session-UUID fragment and for a `\\d+:`-style pattern; assert `results.isEmpty` and `total == 0` (fails before the fix — today the prefix matches)
 - [ ] New test: grep for a pattern present in output text; assert match text equals the stored text (no prefix leakage in behavior)
 - [ ] `swift test` — full suite green (142+ tests, 0 failures)
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass.
+
+## Review Findings (2026-07-16 06:43)
+
+- [x] `Sources/ShellTool/ShellState.swift:241` — Method name includes needless `get` prefix — the verb is implicit at the call site (`state.getCommandIndex(...)` vs `state.commandIndex(...)`). Rename `getCommandIndex` to `commandIndex`.

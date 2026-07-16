@@ -164,7 +164,7 @@ actor ShellState {
     /// The index of the command with `commandID`, throwing `unknownCommand`
     /// when no command with that id was ever started. The single lookup used by
     /// the methods that must reject an unknown id (`appendLines`, `killProcess`).
-    private func getCommandIndex(commandID: Int) throws -> Int {
+    private func commandIndex(commandID: Int) throws -> Int {
         guard let index = commands.firstIndex(where: { $0.id == commandID }) else {
             throw ShellStateError.unknownCommand(commandID)
         }
@@ -175,7 +175,7 @@ actor ShellState {
     /// then every `stderr` line, sharing one continuing 1-based per-command
     /// line counter, each stored as `{sessionID}:{cmdID}:{lineNumber}:{text}\n`.
     func appendLines(commandID: Int, stdout: [String] = [], stderr: [String] = []) throws {
-        let index = try getCommandIndex(commandID: commandID)
+        let index = try commandIndex(commandID: commandID)
 
         var buffer = Data()
         for line in stdout + stderr {
@@ -231,7 +231,7 @@ actor ShellState {
         // status/exitCode/completed timestamps) — a killed command has no exit
         // code. Re-fetch the index afterwards to return the updated record.
         completeCommand(commandID: commandID, status: .killed, exitCode: nil)
-        let index = try getCommandIndex(commandID: commandID)
+        let index = try commandIndex(commandID: commandID)
         return commands[index]
     }
 

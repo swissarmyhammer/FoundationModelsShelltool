@@ -349,11 +349,7 @@ public struct ShellPolicy: Sendable {
     public static func defaultUserConfigURL() -> URL? {
         let workingDirectory = URL(
             fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        let stack = DotfolderStack(name: dotfolderName, workingDirectory: workingDirectory)
-        guard let userLayer = stack.layers.first(where: { $0.source == .user }) else {
-            return nil
-        }
-        return userLayer.root.appendingPathComponent(configFileName)
+        return configURL(layerSource: .user, workingDirectory: workingDirectory)
     }
 
     /// The default project-layer config path: the nearest enclosing git working
@@ -364,11 +360,26 @@ public struct ShellPolicy: Sendable {
     ///   git working tree.
     public static func defaultProjectConfigURL() -> URL? {
         guard let gitRoot = nearestGitRoot() else { return nil }
-        let stack = DotfolderStack(name: dotfolderName, workingDirectory: gitRoot)
-        guard let projectLayer = stack.layers.first(where: { $0.source == .project }) else {
+        return configURL(layerSource: .project, workingDirectory: gitRoot)
+    }
+
+    /// Resolves a `DotfolderStack` layer's config file path for `layerSource`,
+    /// shared by `defaultUserConfigURL()` and `defaultProjectConfigURL()` so
+    /// their stack-construction and layer-lookup logic cannot drift apart.
+    ///
+    /// - Parameters:
+    ///   - layerSource: which `DotfolderStack` layer to resolve (`.user` or
+    ///     `.project`).
+    ///   - workingDirectory: the directory the stack resolves layers relative
+    ///     to.
+    /// - Returns: the resolved layer's config file URL, or `nil` if the stack
+    ///   provides no layer for `layerSource`.
+    private static func configURL(layerSource: DotfolderStack.Source, workingDirectory: URL) -> URL? {
+        let stack = DotfolderStack(name: dotfolderName, workingDirectory: workingDirectory)
+        guard let layer = stack.layers.first(where: { $0.source == layerSource }) else {
             return nil
         }
-        return projectLayer.root.appendingPathComponent(configFileName)
+        return layer.root.appendingPathComponent(configFileName)
     }
 
     /// The nearest enclosing git working tree's root directory, walking up

@@ -69,8 +69,9 @@ ports), and `apps/shelltool-cli` (the CLI). Registered as tool name `"shell"`, c
   commands are in the PID map.
 - **Exit codes are data**: a non-zero exit is a *successful* tool call reporting
   `exit_code: 2` — only spawn/system failures are tool errors.
-- **Security**: permit-then-deny regex policy from a three-layer stacked YAML config
-  (builtin embedded → `~/.shell/config.yaml` → `{git_root}/.shell/config.yaml`),
+ - **Security**: permit-then-deny regex policy from a three-layer stacked YAML config
+   (builtin embedded → `~/.config/shell/config.yaml` (XDG, via `FoundationModelsExtras`'s
+   `DotfolderStack`) → `{git_root}/.shell/config.yaml`),
   reloaded fresh on every call; builtin denies are catastrophic-mistake guards
   (`rm -rf /`, `dd ... of=/dev/`, `sudo`, `curl | sh`, …), explicitly *not* a security
   boundary; shell metacharacters allowed. Env var names must match
@@ -212,8 +213,9 @@ actor ShellState {
 `ShellPolicy`, a direct port of `swissarmyhammer-shell`:
 
 - **Stacked YAML config** (Yams): builtin (embedded string — the same pattern list as
-  sah's `builtin/shell/config.yaml`) → `~/.shell/config.yaml` →
-  `{git_root}/.shell/config.yaml`. Settings: later layer wins; deny/permit pattern
+  sah's `builtin/shell/config.yaml`) → `~/.config/shell/config.yaml` (XDG, via
+  `FoundationModelsExtras`'s `DotfolderStack`) → `{git_root}/.shell/config.yaml`.
+  Settings: later layer wins; deny/permit pattern
   lists: concatenated. Loaded **fresh on every `execute command`** — config edits take
   effect immediately, no cache (parity).
 - **Permit-then-deny**: permit match → allow (short-circuit); deny match → corrective

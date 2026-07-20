@@ -6,8 +6,11 @@
 //
 //   1. Builtin — the embedded `builtinYAML` below, carrying sah's exact
 //      catastrophic-mistake deny list from `builtin/shell/config.yaml`.
-//   2. User — `~/.shell/config.yaml`.
-//   3. Project — `{git_root}/.shell/config.yaml`.
+//   2. User — the XDG config directory for the "shell" dotfolder name, via
+//      `FoundationModelsExtras.DotfolderStack`: `$XDG_CONFIG_HOME/shell/config.yaml`,
+//      falling back to `~/.config/shell/config.yaml`.
+//   3. Project — `{git_root}/.shell/config.yaml`, also derived from
+//      `DotfolderStack`.
 //
 // Deny/permit pattern lists concatenate across layers; scalar settings take the
 // value from the last layer that provides them. The config is reloaded fresh on
@@ -24,6 +27,7 @@
 // message back to the model and let it rephrase within the same turn.
 
 import Foundation
+import FoundationModelsExtras
 import Yams
 
 /// A single permit or deny rule: a regex pattern plus the human-readable reason
@@ -134,13 +138,19 @@ extension ShellSecurityConfig: Decodable {
 /// Construct once and call the `check(...)` methods per command; each call
 /// reloads the config from disk so overlay edits take effect immediately.
 public struct ShellPolicy: Sendable {
-    /// Relative path of a shell config file within each layer's root directory
-    /// (`~` for the user layer, the git root for the project layer). Named once
+    /// The dotfolder name shared with `DotfolderStack`'s user and project
+    /// layers: `"shell"`, yielding `~/.config/shell/` (or
+    /// `$XDG_CONFIG_HOME/shell/`) for the user layer and `{git_root}/.shell/`
+    /// for the project layer. Named once so the two default-path helpers
+    /// cannot drift.
+    private static let dotfolderName = "shell"
+    /// The config file's name within each layer's root directory. Named once
     /// so the two default-path helpers cannot drift.
-    private static let shellConfigFileName = ".shell/config.yaml"
+    private static let configFileName = "config.yaml"
 
-    /// The user-layer config file (`~/.shell/config.yaml` by default). A `nil`
-    /// or missing file contributes nothing.
+    /// The user-layer config file (`~/.config/shell/config.yaml` by default,
+    /// or `$XDG_CONFIG_HOME/shell/config.yaml` when that variable is set). A
+    /// `nil` or missing file contributes nothing.
     let userConfigURL: URL?
     /// The project-layer config file (`{git_root}/.shell/config.yaml` by
     /// default). A `nil` or missing file contributes nothing.
@@ -152,7 +162,9 @@ public struct ShellPolicy: Sendable {
     /// Create a policy over the given overlay files.
     ///
     /// - Parameters:
-    ///   - userConfigURL: user-layer config; defaults to `~/.shell/config.yaml`.
+    ///   - userConfigURL: user-layer config; defaults to
+    ///     `~/.config/shell/config.yaml` (or `$XDG_CONFIG_HOME/shell/config.yaml`
+    ///     when that variable is set).
     ///   - projectConfigURL: project-layer config; defaults to the git root's
     ///     `.shell/config.yaml`, or `nil` when not inside a git working tree.
     ///   - warn: advisory warning sink; defaults to writing to stderr.
@@ -313,21 +325,41 @@ public struct ShellPolicy: Sendable {
         FileHandle.standardError.write(Data("shell policy warning: \(message)\n".utf8))
     }
 
-    /// The default user-layer config path, `~/.shell/config.yaml`.
+    /// The default user-layer config path, resolved via `DotfolderStack`'s XDG
+    /// user layer: `$XDG_CONFIG_HOME/shell/config.yaml`, falling back to
+    /// `~/.config/shell/config.yaml` when that variable is unset or not an
+    /// absolute path.
     public static func defaultUserConfigURL() -> URL? {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(shellConfigFileName)
+        let workingDirectory = URL(
+            fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let stack = DotfolderStack(name: dotfolderName, workingDirectory: workingDirectory)
+        guard let userLayer = stack.layers.first(where: { $0.source == .user }) else {
+            return nil
+        }
+        return userLayer.root.appendingPathComponent(configFileName)
     }
 
     /// The default project-layer config path: the nearest enclosing git working
-    /// tree's `.shell/config.yaml`, or `nil` when not inside one.
+    /// tree's `.shell/config.yaml` (derived via `DotfolderStack`'s project
+    /// layer), or `nil` when not inside one.
     public static func defaultProjectConfigURL() -> URL? {
+        guard let gitRoot = nearestGitRoot() else { return nil }
+        let stack = DotfolderStack(name: dotfolderName, workingDirectory: gitRoot)
+        guard let projectLayer = stack.layers.first(where: { $0.source == .project }) else {
+            return nil
+        }
+        return projectLayer.root.appendingPathComponent(configFileName)
+    }
+
+    /// The nearest enclosing git working tree's root directory, walking up
+    /// from the current working directory, or `nil` when not inside one.
+    private static func nearestGitRoot() -> URL? {
         var directory = URL(
             fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         while true {
             let gitPath = directory.appendingPathComponent(".git").path
             if FileManager.default.fileExists(atPath: gitPath) {
-                return directory.appendingPathComponent(shellConfigFileName)
+                return directory
             }
             let parent = directory.deletingLastPathComponent()
             if parent.path == directory.path { return nil }

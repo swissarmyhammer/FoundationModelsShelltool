@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModelsExtras
 import Testing
 import Yams
 
@@ -317,6 +318,38 @@ import Yams
         let policy = ShellPolicy(userConfigURL: missingURL(), projectConfigURL: missingURL())
         let missing = "/no/such/directory/\(UUID().uuidString)"
         #expect(policy.check(workingDirectory: missing)?.contains("does not exist") == true)
+    }
+
+    // MARK: - Default path resolution (DotfolderStack)
+
+    @Test func defaultUserConfigURLDerivesFromXDGConfigHome() {
+        let expected = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/shell/config.yaml")
+        #expect(ShellPolicy.defaultUserConfigURL() == expected)
+    }
+
+    @Test func xdgConfigHomeOverrideIsHonoredByTheUnderlyingStack() {
+        let overrideRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shellpolicy-xdg-\(UUID().uuidString)", isDirectory: true)
+        let stack = DotfolderStack(
+            name: "shell",
+            workingDirectory: FileManager.default.temporaryDirectory,
+            environment: ["XDG_CONFIG_HOME": overrideRoot.path])
+
+        let userLayer = stack.layers.first { $0.source == .user }
+        #expect(userLayer?.root == overrideRoot.appendingPathComponent("shell", isDirectory: true))
+    }
+
+    @Test func defaultProjectConfigURLResolvesGitRootShellFolder() {
+        let url = ShellPolicy.defaultProjectConfigURL()
+        #expect(url?.path.hasSuffix(".shell/config.yaml") == true)
+
+        let gitPath =
+            url?
+            .deletingLastPathComponent()  // .shell
+            .deletingLastPathComponent()  // git root
+            .appendingPathComponent(".git").path
+        #expect(gitPath.map { FileManager.default.fileExists(atPath: $0) } == true)
     }
 
     // MARK: - Builtin config schema

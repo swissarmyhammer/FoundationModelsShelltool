@@ -35,6 +35,13 @@ let package = Package(
         ),
         // YAML parsing for the stacked `ShellPolicy` configuration files.
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.0"),
+        // `DotfolderStack`, the family-shared layered dotfolder/XDG config
+        // resolver `ShellPolicy` uses to locate its user- and project-layer
+        // config files. Private repo, pinned to `main`.
+        .package(
+            url: "git@github.com:swissarmyhammer/FoundationModelsExtras.git",
+            branch: "main"
+        ),
         // SwiftSyntax powers `DocCoverageTests`' scanner, which parses every
         // source file in `Sources/ShellTool` and fails the build on any
         // undocumented `public` declaration. Already in the resolved graph
@@ -47,13 +54,15 @@ let package = Package(
         // Core library target: the shell operations and their supporting
         // runtime (spawning, output buffering, policy). Applying `@Operation`
         // pulls in `Operations`; `Subprocess` runs the children; `Yams` reads
-        // the policy config.
+        // the policy config; `FoundationModelsExtras` locates it via
+        // `DotfolderStack`.
         .target(
             name: "ShellTool",
             dependencies: [
                 .product(name: "Operations", package: "FoundationModelsOperationTool"),
                 .product(name: "Subprocess", package: "swift-subprocess"),
                 .product(name: "Yams", package: "Yams"),
+                .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
             ]
         ),
 
@@ -94,6 +103,10 @@ let package = Package(
                 // `ShellPolicy.builtinYAML` and detect any key the lenient
                 // production decoder would silently ignore.
                 .product(name: "Yams", package: "Yams"),
+                // Used by `ShellPolicyTests` to construct a `DotfolderStack`
+                // directly with a fake environment, proving an
+                // `XDG_CONFIG_HOME` override is honored.
+                .product(name: "FoundationModelsExtras", package: "FoundationModelsExtras"),
                 // Parse `Sources/ShellTool` in `DocCoverageTests` to fail the
                 // build on any undocumented `public` declaration.
                 .product(name: "SwiftSyntax", package: "swift-syntax"),

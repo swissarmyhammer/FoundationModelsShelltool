@@ -125,6 +125,10 @@ extension ShellSecurityConfig: Decodable {
     /// the later layer. This mirrors the Rust `merge`, including its documented
     /// caveat that the later layer's settings always win as a unit (a layer that
     /// omits a `settings:` block resets settings to their defaults).
+    ///
+    /// - Parameter other: the later, higher-precedence layer to merge in.
+    /// - Returns: the merged config, with concatenated permit/deny lists and
+    ///   `other`'s settings.
     func merged(with other: ShellSecurityConfig) -> ShellSecurityConfig {
         ShellSecurityConfig(
             permit: permit + other.permit,
@@ -283,6 +287,8 @@ public struct ShellPolicy: Sendable {
     /// Starts from the embedded builtin, then merges the user and project layers
     /// in order. A layer whose file is missing or whose YAML fails to parse is
     /// silently skipped, so a broken overlay degrades to builtin-only rules.
+    ///
+    /// - Returns: the merged config across all present, parseable layers.
     func loadConfig() -> ShellSecurityConfig {
         var config = Self.parse(Self.builtinYAML) ?? .empty
         for url in [userConfigURL, projectConfigURL] {
@@ -296,6 +302,9 @@ public struct ShellPolicy: Sendable {
     }
 
     /// Parse a YAML string into a config, or `nil` if it fails to parse.
+    ///
+    /// - Parameter yaml: the YAML text for one config layer.
+    /// - Returns: the parsed config, or `nil` if `yaml` fails to decode.
     static func parse(_ yaml: String) -> ShellSecurityConfig? {
         try? YAMLDecoder().decode(ShellSecurityConfig.self, from: yaml)
     }
@@ -305,6 +314,12 @@ public struct ShellPolicy: Sendable {
     /// Whether `pattern` (as a regex) matches anywhere in `command`. An
     /// uncompilable pattern never matches (a broken overlay rule is inert, not
     /// fatal).
+    ///
+    /// - Parameters:
+    ///   - pattern: the regex pattern to compile and match.
+    ///   - command: the command string to search for a match.
+    /// - Returns: `true` if the pattern matches anywhere in the command,
+    ///   `false` otherwise (including when `pattern` fails to compile).
     private static func matches(_ pattern: String, _ command: String) -> Bool {
         guard let regex = try? Regex(pattern) else { return false }
         return ((try? regex.firstMatch(in: command)) ?? nil) != nil
@@ -312,6 +327,10 @@ public struct ShellPolicy: Sendable {
 
     /// Whether `name` is a valid POSIX-ish env var name:
     /// `^[A-Za-z_][A-Za-z0-9_]*$`.
+    ///
+    /// - Parameter name: the environment variable name to validate.
+    /// - Returns: `true` if `name` is a valid POSIX-style environment variable
+    ///   name, `false` otherwise.
     private static func isValidEnvironmentVariableName(_ name: String) -> Bool {
         guard let first = name.first else { return false }
         guard first.isASCII, first.isLetter || first == "_" else { return false }
@@ -384,6 +403,9 @@ public struct ShellPolicy: Sendable {
 
     /// The nearest enclosing git working tree's root directory, walking up
     /// from the current working directory, or `nil` when not inside one.
+    ///
+    /// - Returns: the root URL of the nearest enclosing git working tree, or
+    ///   `nil` if not inside one.
     private static func nearestGitRoot() -> URL? {
         var directory = URL(
             fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)

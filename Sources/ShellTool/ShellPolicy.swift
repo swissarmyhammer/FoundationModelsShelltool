@@ -147,6 +147,14 @@ public struct ShellPolicy: Sendable {
     /// The config file's name within each layer's root directory. Named once
     /// so the two default-path helpers cannot drift.
     private static let configFileName = "config.yaml"
+    /// Shared reason string for the `fdisk`/`parted` builtin deny rules, named
+    /// once so `builtinYAML` interpolates it rather than duplicating the
+    /// literal.
+    private static let diskPartitioningReason = "Disk partitioning command"
+    /// Shared reason string for the `wget`/`curl` pipe-to-shell builtin deny
+    /// rules, named once so `builtinYAML` interpolates it rather than
+    /// duplicating the literal.
+    private static let downloadExecuteReason = "Download and execute pattern"
 
     /// The user-layer config file (`~/.config/shell/config.yaml` by default,
     /// or `$XDG_CONFIG_HOME/shell/config.yaml` when that variable is set). A
@@ -332,6 +340,12 @@ public struct ShellPolicy: Sendable {
     /// user layer: `$XDG_CONFIG_HOME/shell/config.yaml`, falling back to
     /// `~/.config/shell/config.yaml` when that variable is unset or not an
     /// absolute path.
+    ///
+    /// - Returns: the user-layer config file URL — `$XDG_CONFIG_HOME/shell/config.yaml`
+    ///   when that variable is set to an absolute path, otherwise
+    ///   `~/.config/shell/config.yaml`. `nil` only if the underlying
+    ///   `DotfolderStack` provides no user layer, which the current
+    ///   implementation never omits.
     public static func defaultUserConfigURL() -> URL? {
         let workingDirectory = URL(
             fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
@@ -345,6 +359,9 @@ public struct ShellPolicy: Sendable {
     /// The default project-layer config path: the nearest enclosing git working
     /// tree's `.shell/config.yaml` (derived via `DotfolderStack`'s project
     /// layer), or `nil` when not inside one.
+    ///
+    /// - Returns: the project-layer config file URL, or `nil` when not in a
+    ///   git working tree.
     public static func defaultProjectConfigURL() -> URL? {
         guard let gitRoot = nearestGitRoot() else { return nil }
         let stack = DotfolderStack(name: dotfolderName, workingDirectory: gitRoot)
@@ -390,9 +407,9 @@ public struct ShellPolicy: Sendable {
           - pattern: 'mkfs\s+'
             reason: "Filesystem creation command"
           - pattern: 'fdisk\s+'
-            reason: "Disk partitioning command"
+            reason: "\#(diskPartitioningReason)"
           - pattern: 'parted\s+'
-            reason: "Disk partitioning command"
+            reason: "\#(diskPartitioningReason)"
           - pattern: 'chmod\s+\+s\s+'
             reason: "Set SUID/SGID bit"
 
@@ -410,9 +427,9 @@ public struct ShellPolicy: Sendable {
 
           # Download-and-execute mistake guards (advisory, not a boundary)
           - pattern: 'wget.*http.*\|.*sh'
-            reason: "Download and execute pattern"
+            reason: "\#(downloadExecuteReason)"
           - pattern: 'curl.*http.*\|.*sh'
-            reason: "Download and execute pattern"
+            reason: "\#(downloadExecuteReason)"
           - pattern: 'nc\s+-l\s+'
             reason: "Netcat listener (reverse shell vector)"
 

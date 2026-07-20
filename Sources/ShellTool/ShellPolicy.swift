@@ -185,6 +185,7 @@ public struct ShellPolicy: Sendable {
     /// Evaluation order: `enable_validation` gate → command-length limit →
     /// permit match (short-circuit allow) → deny match (block) → default allow.
     ///
+    /// - Parameter command: the shell command string to validate.
     /// - Returns: `nil` if the command is allowed, otherwise a human-readable
     ///   corrective message carrying the reason it was blocked.
     public func check(command: String) -> String? {
@@ -216,6 +217,7 @@ public struct ShellPolicy: Sendable {
     /// the configured length, contain no null byte, and no CR/LF. Overriding a
     /// protected variable (`PATH`, `HOME`, …) is allowed but emits a warning.
     ///
+    /// - Parameter environment: a map of environment variable names to values.
     /// - Returns: `nil` if every entry is valid, otherwise a corrective message
     ///   for the first offending entry.
     public func check(environment: [String: String]) -> String? {
@@ -251,6 +253,7 @@ public struct ShellPolicy: Sendable {
     /// (`URL(fileURLWithPath:)` normalizes `..` away for relative paths, so a
     /// URL-based check would miss it).
     ///
+    /// - Parameter path: the working directory path string to validate.
     /// - Returns: `nil` if the directory is acceptable, otherwise a corrective
     ///   message.
     public func check(workingDirectory path: String) -> String? {

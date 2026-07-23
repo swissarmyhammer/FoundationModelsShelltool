@@ -1,8 +1,7 @@
 import Foundation
 import Testing
 
-/// Verifies that the eight "departures discovered during implementation"
-/// entries (8–15) are present in `DESIGN_NOTES.md`.
+/// Verifies that the eight "departures discovered during implementation" entries (8–15) are present in `DESIGN_NOTES.md`.
 ///
 /// So a shipped behavior that departs from the plan can't silently drop out
 /// of the changelog.
@@ -14,15 +13,16 @@ import Testing
 /// pin the full prose — only the load-bearing phrase for each departure — so the
 /// entries stay editable while still failing the moment one is removed.
 ///
-/// Entries 8 and 12 were themselves superseded by the soft-deadline detach
-/// work (kanban task `01KY5PDG4B3WH44FR1ZYCJKMWJ` / `ycjkmwj`): their pins were
-/// moved off the original, now-historical wording and onto the superseding
-/// paragraph, so the test fails if the *current* behavior's description ever
-/// regresses — not just if the entry is deleted outright. Entries 13–15 are
-/// new, one per behavior the detach work introduced.
+/// Entries 8 and 12 were superseded by the soft-deadline detach work.
+///
+/// Their pins moved off the original, now-historical wording (kanban task
+/// `01KY5PDG4B3WH44FR1ZYCJKMWJ` / `ycjkmwj`) and onto the superseding
+/// paragraph, so the test fails if the *current* behavior's description
+/// ever regresses — not just if the entry is deleted outright. Entries
+/// 13–15 are new, one per behavior the detach work introduced.
 @Suite("DESIGN_NOTES departures presence")
 struct DesignNotesTests {
-    /// One distinctive phrase per departure entry (8–15).
+    /// Lists one distinctive phrase per departure entry (8–15).
     ///
     /// Each phrase must appear verbatim in `DESIGN_NOTES.md`.
     private static let requiredPhrases = [
@@ -47,7 +47,10 @@ struct DesignNotesTests {
         )
     }
 
-    /// The contents of the package root's `DESIGN_NOTES.md`.
+    /// Returns the contents of the package root's `DESIGN_NOTES.md`.
+    ///
+    /// - Returns: The file contents as a UTF-8 string.
+    /// - Throws: If `DESIGN_NOTES.md` cannot be read or decoded as UTF-8.
     private func designNotes() throws -> String {
         let url = PackageRootValidation.packageRoot().appendingPathComponent("DESIGN_NOTES.md")
         return try String(contentsOf: url, encoding: .utf8)

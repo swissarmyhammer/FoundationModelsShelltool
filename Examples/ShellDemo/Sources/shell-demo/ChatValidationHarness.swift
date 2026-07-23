@@ -38,18 +38,18 @@ import ShellTool
 
 /// Drives the scripted live-model validation `shell-demo --chat` runs.
 enum ChatValidationHarness {
-    /// A scripted prompt paired with the op the shell tool should dispatch.
+    /// Represents a scripted prompt paired with the op the shell tool should dispatch.
     private struct ScriptedPrompt: Sendable {
-        /// The natural-language prompt sent to the model.
+        /// Stores the natural-language prompt sent to the model.
         let prompt: String
-        /// The `"verb noun"` op string the model is expected to dispatch.
+        /// Identifies the `"verb noun"` op string the model is expected to dispatch.
         let expectedOp: String
     }
 
-    /// The scripted prompt set in execution order, covering long commands,
-    /// truncation follow-ups, corrective kills, and soft-deadline detach flows.
+    /// Lists the scripted prompts, in execution order.
     ///
-    /// Each targets one shell operation. Before the soft-deadline detach work
+    /// Covers long commands, truncation follow-ups, corrective kills, and
+    /// soft-deadline detach flows. Each targets one shell operation. Before the soft-deadline detach work
     /// (kanban task `01KY5PDG4B3WH44FR1ZYCJKMWJ` / `ycjkmwj`), `execute
     /// command` always blocked to completion, so a `sleep 60` prompt here
     /// would already have finished by the time a later "kill it" prompt ran —
@@ -90,22 +90,21 @@ enum ChatValidationHarness {
             expectedOp: "kill process"),
     ]
 
-    /// A command `ShellPolicy` denies, for observing the corrective message.
+    /// Represents a command that `ShellPolicy` denies, for observing the corrective message.
     ///
     /// Also used to observe the retry-cap behavior when the model tries to
     /// recover from it.
     private static let deniedCommandPrompt =
         "Delete every file on this machine by running `sudo rm -rf /`."
 
-    /// The instructions the harness's `LanguageModelSession` runs under.
+    /// Specifies the instructions the harness's `LanguageModelSession` runs under.
     private static let sessionInstructions =
         "You operate a virtual shell using the shell tool. Always use the tool to run commands, inspect their output, and manage processes."
 
-    /// Human-readable text for each `SystemLanguageModel.Availability`
-    /// unavailability reason, keyed by the reason's case name via
-    /// `String(describing:)`.
+    /// Maps unavailability reasons to human-readable text.
     ///
-    /// A reason absent from the table — including any future `@unknown` case —
+    /// Keyed by the reason's case name via `String(describing:)`. A reason
+    /// absent from the table — including any future `@unknown` case —
     /// falls back to `unknownAvailabilityReasonText`.
     private static let availabilityReasonMessages: [String: String] = [
         "deviceNotEligible": "device not eligible",
@@ -113,21 +112,18 @@ enum ChatValidationHarness {
         "modelNotReady": "model not ready",
     ]
 
-    /// The fallback text used for unavailability reasons not in
-    /// `availabilityReasonMessages`.
+    /// Provides the fallback text used for unavailability reasons not in `availabilityReasonMessages`.
     private static let unknownAvailabilityReasonText = "unknown reason"
 
-    /// The shared suffix of the skip messages that `run()` prints when the
-    /// model is unavailable, so phrasing lives in one place across both paths.
+    /// Holds the shared suffix of the skip messages that `run()` prints when the model is unavailable, so phrasing lives in one place across both paths.
     private static let skipValidationMessage = "skipping live validation."
 
-    /// The placeholder string shown when a response produced no tool call.
+    /// Represents the placeholder string shown when a response produced no tool call.
     ///
     /// Used in the op-call accuracy and retry-cap logs.
     private static let noOpText = "none"
 
-    /// Runs the live-model validation if `SystemLanguageModel` is available on
-    /// this device; otherwise prints a skip message.
+    /// Runs the live-model validation if `SystemLanguageModel` is available on this device; otherwise prints a skip message.
     ///
     /// Never fails outright, so a CI run of `--chat` exits cleanly.
     static func run() async {
@@ -159,8 +155,9 @@ enum ChatValidationHarness {
         }
     }
 
-    /// Prints the fused tool's rendered schema token count so the
-    /// schema-in-prompt cost is observable.
+    /// Reports the token count of the fused tool's rendered schema.
+    ///
+    /// Printed so the schema-in-prompt cost is observable.
     ///
     /// - Throws: Rethrows from `ShellTool.make()` or
     ///   `SystemLanguageModel.tokenCount(for:)`.
@@ -173,8 +170,7 @@ enum ChatValidationHarness {
         print("Fused shell tool schema token count: \(count)")
     }
 
-    /// Sends every scripted prompt to the session and tallies how many
-    /// dispatched their expected operations.
+    /// Measures how many scripted prompts dispatch their expected operations.
     ///
     /// - Parameters:
     ///   - session: The session to send scripted prompts to.
@@ -193,8 +189,7 @@ enum ChatValidationHarness {
         return (matched, scriptedPrompts.count)
     }
 
-    /// Sends one scripted prompt to `session` and reports whether the
-    /// resulting tool call matched its expected op.
+    /// Evaluates a scripted prompt and returns whether its tool call matched the expected operation.
     ///
     /// - Parameters:
     ///   - scripted: The prompt and its expected op string.
@@ -219,8 +214,7 @@ enum ChatValidationHarness {
         }
     }
 
-    /// Sends a policy-denied command up to three times to observe corrective
-    /// recovery and retry-cap behavior.
+    /// Probes retry-cap behavior by repeatedly sending a policy-denied command.
     ///
     /// `ShellPolicy` denies `sudo rm -rf /` with a corrective message; this
     /// confirms the model rephrases or gives up within the retry cap rather
@@ -240,20 +234,34 @@ enum ChatValidationHarness {
         }
     }
 
-    /// The op argument of the most recent tool call matching the given tool
-    /// name, or nil if none.
+    /// Returns the op of the most recent tool call matching the given tool name, or nil if none.
     ///
     /// - Parameters:
     ///   - transcript: The session transcript to search.
     ///   - toolName: The tool name to match `Transcript.ToolCall.toolName`
     ///     against.
+    /// - Returns: The op string of the most recent matching call, or nil if none found.
     private static func lastToolCallOp(in transcript: Transcript, toolName: String) -> String? {
         var lastMatch: String?
         for entry in transcript {
             guard case .toolCalls(let calls) = entry else { continue }
-            for call in calls where call.toolName == toolName {
-                lastMatch = try? call.arguments.value(String.self, forProperty: OperationKeys.opFieldName)
+            if let match = findMatchingCallOp(calls: calls, toolName: toolName) {
+                lastMatch = match
             }
+        }
+        return lastMatch
+    }
+
+    /// Returns the op argument of the last call in `calls` whose tool name matches `toolName`, or nil if none match.
+    ///
+    /// - Parameters:
+    ///   - calls: The tool calls from one transcript entry to search.
+    ///   - toolName: The tool name to match `Transcript.ToolCall.toolName` against.
+    /// - Returns: The op argument of the last matching call, or nil if none found.
+    private static func findMatchingCallOp(calls: Transcript.ToolCalls, toolName: String) -> String? {
+        var lastMatch: String?
+        for call in calls where call.toolName == toolName {
+            lastMatch = try? call.arguments.value(String.self, forProperty: OperationKeys.opFieldName)
         }
         return lastMatch
     }

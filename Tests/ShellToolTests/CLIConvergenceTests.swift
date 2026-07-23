@@ -195,6 +195,52 @@ import Testing
         #expect(cliResult.output.contains("2: beta"))
     }
 
+    // MARK: - execute command: waitSeconds exposed with no short flag
+
+    /// `execute command`'s `waitSeconds` has no `@OperationParam(short:)`
+    /// either — the same pinned convention `get lines` already carries —
+    /// so its only CLI form is `--wait-seconds`. Both paths detach the same
+    /// `sleep 30` at the same ~1s deadline and must converge on the same
+    /// `status: "running"` result with no `exitCode` key — except
+    /// `durationMs`, which is elapsed-so-far and so volatile between the two
+    /// independently timed runs (the same reason `listProcesses...` strips
+    /// `duration` before comparing).
+    @Test func executeCommandWaitSecondsCLIFlagConvergesWithTheModelPathAndReturnsARunningResult()
+        async throws
+    {
+        let cli = try makeHarness()
+        let model = try makeHarness()
+        defer {
+            Task { _ = try? await cli.context.state.killProcess(commandID: 1) }
+            Task { _ = try? await model.context.state.killProcess(commandID: 1) }
+        }
+
+        let cliResult = await (try cli.driver()).run(
+            arguments: ["command", "execute", "--command", "sleep 30", "--wait-seconds", "1"])
+        let modelJSON = try await model.tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "execute command", "command": "sleep 30", "waitSeconds": 1,
+            ]))
+
+        #expect(cliResult.exitCode == 0)
+        #expect(cliResult.output.contains("\"status\":\"running\""))
+        #expect(!cliResult.output.contains("\"exitCode\""))
+        #expect(
+            stableExecuteResultFields(cliResult.output) == stableExecuteResultFields(modelJSON))
+    }
+
+    /// Decode an `execute command` result object and project it to its
+    /// stable fields, dropping the volatile `durationMs` — so two
+    /// independently timed `running` snapshots still compare equal.
+    private func stableExecuteResultFields(_ json: String) -> [String: String] {
+        let object = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
+        var stable: [String: String] = [:]
+        for (key, value) in object where key != "durationMs" {
+            stable[key] = "\(value)"
+        }
+        return stable
+    }
+
     // MARK: - kill process
 
     @Test func killProcessConvergesAcrossCLIAndModelPaths() async throws {

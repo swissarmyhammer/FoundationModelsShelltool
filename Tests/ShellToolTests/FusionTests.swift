@@ -203,4 +203,56 @@ import Testing
         #expect(response.contains("1: alpha"))
         #expect(response.contains("\"status\":\"completed\""))
     }
+
+    // MARK: - waitSeconds schema ownership (execute command's description wins the fusion collision)
+
+    /// `execute command` and `get lines` both declare `waitSeconds` with no
+    /// short flag (pinned so they can't diverge — see each op's file
+    /// header). `SchemaFusion` resolves a same-named collision by keeping
+    /// the first-declaring operation's description (`operations` order, per
+    /// `SchemaFusion`'s doc comment); since `ExecuteCommand` is fused before
+    /// `GetLines` in `ShellTool.make`, the fused schema's single
+    /// `waitSeconds` property must carry `ExecuteCommand`'s guide text, not
+    /// `GetLines`'s.
+    @Test func executeCommandWaitSecondsSchemaWinsTheFusionCollisionOverGetLines() throws {
+        let tool = try makeTool()
+        let object = try fusedSchemaObject(tool)
+        let properties = try #require(object["properties"] as? [String: Any])
+        let waitSecondsSchema = try #require(properties["waitSeconds"] as? [String: Any])
+        let required = try #require(object["required"] as? [String])
+
+        #expect(waitSecondsSchema["type"] as? String == "integer")
+        #expect(!required.contains("waitSeconds"))
+        #expect(
+            waitSecondsSchema["description"] as? String
+                == "Seconds to wait for completion before returning with the command still running (optional, default: 30; 0 returns immediately)"
+        )
+    }
+
+    // MARK: - execute command: waitSeconds dispatches through the fused tool
+
+    /// The real `ShellTool.make(context:)` fusion — not the hand-rolled
+    /// single-op tool `ExecuteCommandTests` uses — must wire `waitSeconds`
+    /// through to `ShellRunner.run(_:wait:)` and surface a `.running` result
+    /// exactly like the per-op suite already proves in isolation.
+    @Test func executeCommandWaitSecondsDispatchesThroughTheFusedToolAndReturnsARunningResult() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shelltool-test-\(UUID().uuidString)", isDirectory: true)
+        let state = try ShellState(preferredDirectory: directory)
+        let policy = ShellPolicy(userConfigURL: nil, projectConfigURL: nil, warn: { _ in })
+        let context = ShellContext(state: state, policy: policy)
+        let tool = try ShellTool.make(context: context)
+        defer { Task { _ = try? await context.state.killProcess(commandID: 1) } }
+
+        let json = try await tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "execute command", "command": "sleep 30", "waitSeconds": 1,
+            ]))
+
+        #expect(json.contains("\"commandId\":1"))
+        #expect(json.contains("\"status\":\"running\""))
+        #expect(!json.contains("\"exitCode\""))
+        #expect(json.contains("get lines"))
+        #expect(json.contains("kill process"))
+    }
 }

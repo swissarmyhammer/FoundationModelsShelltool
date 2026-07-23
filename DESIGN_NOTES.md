@@ -161,7 +161,18 @@ which assembles the internal context itself — the one `preferredDirectory`
 parameter lets a caller point the `.shell` store somewhere other than the working
 directory. `make(context:)` remains available for `@testable` callers.
 
-### 12. `ExecuteResult.exitCode` is non-optional `Int`
+### 12. `ExecuteResult.exitCode` is non-optional `Int` (superseded)
+
+**Superseded** by the `waitSeconds` soft-deadline detach (kanban task
+`01KY57S9Y3QJF0NN668YDR8Y7K` / `ydr8y7k`): `ExecuteResult.exitCode` is `Int?`
+again, matching plan §3 after all. `execute command` now exposes
+`ShellRunner.run(_:wait:)`'s soft deadline, and a command still `running`
+when `waitSeconds` elapses has no exit code yet — the field is omitted from
+the encoded JSON (synthesized `encodeIfPresent`, the same technique
+`ProcessRow.exitCode` already used) rather than reporting a placeholder. A
+*finished* command's `exitCode` is populated exactly as the original entry
+below describes, including the `-1` sentinel for a killed or timed-out
+record. The original entry is kept below for history.
 
 Plan §3 spelled the exit code as `Int?`. The shipped `ExecuteResult.exitCode` in
 `Sources/ShellTool/Operations/ExecuteCommand.swift` is a non-optional `Int`: a

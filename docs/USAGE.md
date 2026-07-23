@@ -29,6 +29,13 @@ internal struct ExecuteCommand {
     /// via `get lines`. Parity with the Rust `DEFAULT_TAIL_LINES`.
     static let tailLineCount = 32
 
+    /// Seconds `execute(in:)` waits for the command when `waitSeconds` is
+    /// omitted — long enough that a normal command still returns its result
+    /// in the same call, short enough that a runaway command still returns
+    /// to the model (as a `running` snapshot) within one turn instead of
+    /// stalling it indefinitely.
+    static let defaultWaitSeconds = 30
+
     @Guide(description: "The shell command to execute")
     @OperationParam(short: "c")
     var command: String
@@ -47,6 +54,15 @@ internal struct ExecuteCommand {
     )
     @OperationParam(short: "e")
     var environment: String?
+
+    /// No `@OperationParam(short:)`: pinned so this op and `get lines`'s
+    /// identically named `waitSeconds` can never diverge into different
+    /// short flags (see this file's header and `GetLines`'s).
+    @Guide(
+        description:
+            "Seconds to wait for completion before returning with the command still running (optional, default: 30; 0 returns immediately)"
+    )
+    var waitSeconds: Int?
 }
 ```
 <!-- /doc-snippet -->

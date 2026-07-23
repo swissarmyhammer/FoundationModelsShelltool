@@ -27,8 +27,8 @@ comments:
 depends_on:
 - 01KY57R5GC12AQJ439NS9RENTY
 - 01KY5QYMNJ4YKC6MANB14ZW0TF
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9280'
 title: 'Detached execution: ShellRunner soft-deadline wait + supervisor with process-exit sweep'
 ---
 ## What

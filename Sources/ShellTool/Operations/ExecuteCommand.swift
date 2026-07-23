@@ -13,6 +13,22 @@
 // model. Carrying the correction in the output (`ExecuteOutput.corrective`)
 // therefore lets the model rephrase within the same turn — matching the
 // `ShellPolicy` contract and the framework's "return, don't throw" design.
+//
+// `waitSeconds` exposes `ShellRunner.run(_:wait:)`'s soft deadline: this call
+// waits up to `waitSeconds` seconds (`defaultWaitSeconds` when omitted, `0` to
+// detach immediately) for the command to finish, and returns whichever comes
+// first. A command still running once the deadline elapses is reported with
+// `status: "running"`, the output captured so far as its tail, `exitCode`
+// omitted (the process hasn't exited), and an `outputNote` naming the
+// follow-up protocol — `get lines` to keep reading, `kill process` to stop
+// it, `list processes` to check on it — rather than the tail-truncation note
+// a finished command's `outputNote` carries. This bounds the *call*; `timeout`
+// keeps bounding the *child* regardless of whether anyone is still awaiting
+// it (see `ShellRunner.run`'s file header).
+//
+// A negative `waitSeconds` is the one corrective path this adds (mirroring
+// `GetLines`'s identical `waitSeconds` convention — see that op's file
+// header): checked up front, before any read or spawn.
 
 import FoundationModels
 import Foundation
@@ -33,6 +49,13 @@ internal struct ExecuteCommand {
     /// via `get lines`. Parity with the Rust `DEFAULT_TAIL_LINES`.
     static let tailLineCount = 32
 
+    /// Seconds `execute(in:)` waits for the command when `waitSeconds` is
+    /// omitted — long enough that a normal command still returns its result
+    /// in the same call, short enough that a runaway command still returns
+    /// to the model (as a `running` snapshot) within one turn instead of
+    /// stalling it indefinitely.
+    static let defaultWaitSeconds = 30
+
     @Guide(description: "The shell command to execute")
     @OperationParam(short: "c")
     var command: String
@@ -51,6 +74,15 @@ internal struct ExecuteCommand {
     )
     @OperationParam(short: "e")
     var environment: String?
+
+    /// No `@OperationParam(short:)`: pinned so this op and `get lines`'s
+    /// identically named `waitSeconds` can never diverge into different
+    /// short flags (see this file's header and `GetLines`'s).
+    @Guide(
+        description:
+            "Seconds to wait for completion before returning with the command still running (optional, default: 30; 0 returns immediately)"
+    )
+    var waitSeconds: Int?
 }
 
 extension ExecuteCommand {
@@ -62,6 +94,12 @@ extension ExecuteCommand {
     /// completion and its stored output tail is formatted into an
     /// `ExecuteResult`.
     func execute(in context: ShellContext) async throws -> ExecuteOutput {
+        // Checked first, before any read or spawn — mirroring `GetLines`'s
+        // identical `waitSeconds` convention (see that op's file header).
+        if let waitSeconds, waitSeconds < 0 {
+            return .corrective("waitSeconds must be non-negative")
+        }
+
         // A blank command is rejected before the policy check, mirroring the
         // Rust pipeline's leading `validate_not_empty(command)`.
         if command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -93,9 +131,22 @@ extension ExecuteCommand {
             environment: parsedEnvironment,
             timeout: timeout.map { .seconds($0) }
         )
-        let outcome = try await context.runner.run(request)
+        switch try await context.runner.run(request, wait: Self.waitDuration(for: waitSeconds)) {
+        case .finished(let outcome):
+            return .ran(await Self.result(for: outcome, in: context))
+        case .running(let commandID):
+            return .ran(await Self.runningResult(commandID: commandID, in: context))
+        }
+    }
 
-        return .ran(await Self.result(for: outcome, in: context))
+    /// The soft deadline `execute(in:)` passes to `ShellRunner.run(_:wait:)`:
+    /// `waitSeconds` seconds, or `defaultWaitSeconds` when `waitSeconds` is
+    /// `nil`. A pure function (rather than inlined into `execute(in:)`) so
+    /// the omitted-`waitSeconds` default is pinned by a direct unit test
+    /// against the named constant, without ever waiting out a real 30
+    /// seconds.
+    static func waitDuration(for waitSeconds: Int?) -> Duration {
+        .seconds(waitSeconds ?? defaultWaitSeconds)
     }
 
     /// Assemble the `ExecuteResult` for a finished command: read its stored
@@ -132,6 +183,39 @@ extension ExecuteCommand {
             durationMs: record.map(durationMs) ?? 0,
             output: output,
             outputNote: note
+        )
+    }
+
+    /// The fixed advisory `runningResult(commandID:in:)` attaches: the
+    /// follow-up protocol for a command still running once `waitSeconds`'s
+    /// deadline elapsed, rather than a tail-truncation note.
+    static let runningOutputNote =
+        "still running — use get lines (with waitSeconds to wait for more output), kill process to stop, list processes to check status"
+
+    /// Assemble the `ExecuteResult` for a command still running once
+    /// `waitSeconds`'s soft deadline elapsed: the stored lines captured so
+    /// far as the tail (the same window `result(for:in:)` uses), but
+    /// `status: "running"`, `exitCode` omitted (the process hasn't exited),
+    /// and `outputNote` replaced by `runningOutputNote` rather than a
+    /// tail-truncation note.
+    ///
+    /// `durationMs` comes from the record's `duration`, which — for a
+    /// running command — measures elapsed time to *now* rather than to a
+    /// completion instant (see `CommandRecord.duration`), so it reports
+    /// elapsed-so-far exactly as a `running` snapshot should.
+    private static func runningResult(commandID: Int, in context: ShellContext) async -> ExecuteResult {
+        let record = await context.state.listCommands().first { $0.id == commandID }
+        let stored = (try? await context.state.getLines(commandID: commandID)) ?? []
+        let output = stored.suffix(tailLineCount).map { "\($0.lineNumber): \($0.text)" }
+
+        return ExecuteResult(
+            commandID: commandID,
+            status: CommandStatus.running.rawValue,
+            exitCode: nil,
+            lines: stored.count,
+            durationMs: record.map(durationMs) ?? 0,
+            output: output,
+            outputNote: runningOutputNote
         )
     }
 
@@ -200,18 +284,24 @@ internal enum ExecuteOutput: Encodable, Sendable, Equatable {
     }
 }
 
-/// The structured result of a completed `execute command`.
+/// The structured result of `execute command`: either a completed run, or a
+/// snapshot of a command still `running` once `waitSeconds`'s soft deadline
+/// elapsed.
 ///
-/// `outputNote` is optional and omitted from the encoded JSON when `nil` (the
-/// synthesized `Encodable` uses `encodeIfPresent` for optionals), so it appears
-/// only when the stored output was truncated to the tail.
+/// `exitCode` and `outputNote` are optional and omitted from the encoded
+/// JSON when `nil` (the synthesized `Encodable` uses `encodeIfPresent` for
+/// optionals — the same technique `ProcessRow.exitCode` uses): `exitCode`
+/// appears only once the command has exited; `outputNote` appears only when
+/// the stored output was truncated to the tail, or the command is still
+/// `running` (carrying the long-poll protocol instead).
 internal struct ExecuteResult: Encodable, Sendable, Equatable {
     /// The command's `ShellState`-assigned 1-based id, for later `get lines`.
     let commandID: Int
-    /// Final status: `completed`, `timed_out`, or `killed`.
+    /// Current status: `completed`, `timed_out`, `killed`, or `running`.
     let status: String
-    /// Process exit code; `-1` for a timeout or signal death.
-    let exitCode: Int
+    /// Process exit code once known; `-1` for a timeout or signal death;
+    /// `nil` (and omitted) while the command is still `running`.
+    let exitCode: Int?
     /// Total number of stored output lines (stdout then stderr).
     let lines: Int
     /// Elapsed run time in whole milliseconds.

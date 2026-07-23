@@ -86,6 +86,10 @@ import Testing
 
         let final = buffer.finish()
         #expect(final.stdout == ["[Binary content: 10 bytes]"])
+        // finish()'s binary branch collapses both streams into the single
+        // stdout placeholder above; stderr is intentionally empty here, not
+        // a second copy of the placeholder.
+        #expect(final.stderr == [])
     }
 
     @Test func plainTextIsNotFlaggedBinary() {

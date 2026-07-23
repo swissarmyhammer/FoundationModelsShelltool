@@ -71,6 +71,19 @@ comments:
 
     All Review Findings checklist items across all three dated sections are now [x]; task progress is 1.0. Leaving in `doing` per the implement workflow — ready for /review.
   timestamp: 2026-07-23T15:39:37.773405+00:00
+- actor: claude-code
+  id: 01ky7tsy2cg8ats81sgdy9pepg
+  text: |-
+    Resolved the 2026-07-23 10:41 review finding (the sole unchecked item) in Tests/ShellToolTests/OutputBufferTests.swift, test liveBinaryPlaceholderMatchesCumulativeStoredByteCountAcrossStreams.
+
+    The test's name/comment claim to verify live-vs-finish() equivalence "across streams" but only asserted final.stdout, never final.stderr. Read finish()'s binary branch first to confirm the correct expected value before writing the assertion: when binaryDetected, finish() returns FinalLines(stdout: [placeholder]) with stderr defaulting to [] — it collapses both streams into one stdout placeholder, it does not duplicate the placeholder into stderr. So the symmetric assertion is `#expect(final.stderr == [])`, not a second copy of the placeholder string (the outer task's paraphrase suggested the latter, but the kanban finding's own text offered the `== []` form as the correct option, matching actual production behavior). Added that assertion plus a comment explaining why stderr is empty rather than a second placeholder copy.
+
+    Verification: swift test — 166 tests / 16 suites, 0 failures, exit 0 (count unchanged, test-only strengthening).
+
+    Process note for the next agent: hit the same kanban update-task corruption bug documented on this task's previous pass. Root cause identified this time — copying the description text as rendered in a `get task` JSON tool-result (which necessarily shows embedded newlines as literal backslash-n, since that's valid JSON string encoding) and pasting it back into an `update task` call reproduces literal backslash-n bytes in storage, and also reset progress to 0.0 and tags to []. Fixed by re-issuing update task with the description built from real embedded newlines (typed as actual line breaks, not copied from JSON-rendered output) and passing tags explicitly; verified via raw read of .kanban/tasks/<id>.md that the stored body now has real newlines, progress: 1.0, tags: ["long-running"]. Lesson: never reuse get-task's JSON-rendered description text verbatim as update-task input — reconstruct it with real newlines instead.
+
+    All Review Findings checklist items across all four dated sections are now [x]; task progress is 1.0. Leaving in `doing` per the implement workflow — ready for /review.
+  timestamp: 2026-07-23T15:51:45.484584+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'Incremental output recording: stream lines into ShellState while a command runs'
@@ -129,3 +142,7 @@ Keep `ExecuteCommand`'s tail assembly working unchanged (it reads stored lines a
 ## Review Findings (2026-07-23 10:30)
 
 - [x] `Tests/ShellToolTests/OutputBufferTests.swift:75` — Test claims to verify that live stdout/stderr properties report the same cumulative byte count as finish() does — its comment (lines 80-82) states this invariant explicitly — but the test body only asserts on the live properties and never calls finish() to verify they agree. Add an assertion verifying finish() returns the same placeholder byte count to complete the equivalence check: `let final = buffer.finish(); #expect(final.stdout == ["[Binary content: 10 bytes]"])`.
+
+## Review Findings (2026-07-23 10:41)
+
+- [x] `Tests/ShellToolTests/OutputBufferTests.swift:142` — Test asserts equivalence between live and finish() byte-count output 'across streams' (per name and comment), but checks both `buffer.stdout` and `buffer.stderr` (live side) while only asserting `final.stdout` (finish side). Missing assertion on `final.stderr` breaks the symmetry claim. Add `#expect(final.stderr == [])` after line 143, or remove the `buffer.stderr` assertion if finish().stderr is intentionally omitted from the equivalence claim. A test claiming 'across streams' must check both directions.

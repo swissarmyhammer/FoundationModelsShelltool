@@ -83,6 +83,9 @@ import Testing
         // own resident `data.count`.
         #expect(buffer.stdout == "[Binary content: 10 bytes]")
         #expect(buffer.stderr == "[Binary content: 10 bytes]")
+
+        let final = buffer.finish()
+        #expect(final.stdout == ["[Binary content: 10 bytes]"])
     }
 
     @Test func plainTextIsNotFlaggedBinary() {

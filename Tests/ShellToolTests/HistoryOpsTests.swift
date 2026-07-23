@@ -410,7 +410,7 @@ import Testing
         async throws
     {
         let context = try makeContext()
-        _ = try await ShellRunner(state: context.state).run(
+        _ = try await ShellRunner(state: context.state, registry: ProcessRegistry()).run(
             .init(command: "printf 'alpha\\nbeta\\n'"))
 
         let operation = try GetLines(
@@ -446,7 +446,7 @@ import Testing
     @Test func getLinesLongPollReturnsAsSoonAsARunningCommandEmitsARequestedLine() async throws {
         let context = try makeContext()
         let running = Task {
-            try await ShellRunner(state: context.state).run(
+            try await ShellRunner(state: context.state, registry: ProcessRegistry()).run(
                 .init(command: "sh -c 'sleep 0.5; echo late'"))
         }
         defer { running.cancel() }
@@ -475,7 +475,7 @@ import Testing
     @Test func getLinesDeadlineElapsesWithNoNewLinesReturnsEmptyLinesAndRunningStatus() async throws {
         let context = try makeContext()
         let running = Task {
-            try await ShellRunner(state: context.state).run(.init(command: "sleep 5"))
+            try await ShellRunner(state: context.state, registry: ProcessRegistry()).run(.init(command: "sleep 5"))
         }
         defer { running.cancel() }
         try await waitUntilACommandIsRegistered(in: context)
@@ -503,7 +503,7 @@ import Testing
     @Test func getLinesReturnsPromptlyOnceARunningCommandFinishesWithNoLinesInRange() async throws {
         let context = try makeContext()
         let running = Task {
-            try await ShellRunner(state: context.state).run(.init(command: "sleep 0.3"))
+            try await ShellRunner(state: context.state, registry: ProcessRegistry()).run(.init(command: "sleep 0.3"))
         }
         defer { running.cancel() }
         try await waitUntilACommandIsRegistered(in: context)

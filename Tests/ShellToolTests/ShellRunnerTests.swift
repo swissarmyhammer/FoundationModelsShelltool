@@ -12,12 +12,17 @@ import Testing
 @Suite struct ShellRunnerTests {
 
     /// A `ShellRunner` over a `ShellState` rooted in a unique temp directory.
-    private func makeRunner() throws -> (ShellRunner, ShellState, URL) {
+    ///
+    /// - Parameter registry: The process-group registry to inject. Defaults to
+    ///   a fresh **private** `ProcessRegistry()` (never `.global`) so ordinary
+    ///   tests never touch the process-wide instance; pass one explicitly when
+    ///   a test needs to observe or sweep its state.
+    private func makeRunner(registry: ProcessRegistry = ProcessRegistry()) throws -> (ShellRunner, ShellState, URL) {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("shellrunner-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
         let state = try ShellState(preferredDirectory: tmp.appendingPathComponent(".shell"))
-        return (ShellRunner(state: state), state, tmp)
+        return (ShellRunner(state: state, registry: registry), state, tmp)
     }
 
     /// Count live processes whose full command line matches `pattern`, via
@@ -187,7 +192,7 @@ import Testing
         // lines exceed it — the cap logic itself is covered exhaustively in
         // OutputBufferTests; here we prove the runner wires truncation + marker
         // through to the log.
-        let runner = ShellRunner(state: state, maxOutputSize: 200)
+        let runner = ShellRunner(state: state, maxOutputSize: 200, registry: ProcessRegistry())
 
         let outcome = try await runner.run(
             .init(command: "for i in $(seq 1 60); do echo \"line$i\"; done"))
@@ -332,5 +337,34 @@ import Testing
         #expect(outcome.status == .completed)
         #expect(outcome.exitCode == 0)
         #expect(elapsed >= .milliseconds(900), "sleep 1 finished suspiciously early (\(elapsed))")
+    }
+
+    // MARK: - ProcessRegistry: register/deregister lifecycle across a run
+
+    /// `run(_:)` registers the child's pid right after `state.registerProcess`
+    /// (visible in the registry while the command is still executing) and
+    /// deregisters it on the `defer` teardown site — so a completed run leaves
+    /// a private registry empty again.
+    @Test func runRegistersTheChildDuringExecutionAndDeregistersAfterCompletion() async throws {
+        let registry = ProcessRegistry()
+        let (runner, _, tmp) = try makeRunner(registry: registry)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let runTask = Task {
+            try await runner.run(.init(command: "echo one; sleep 0.3"))
+        }
+        defer { runTask.cancel() }
+
+        // Poll until the still-running child shows up in the registry.
+        let clock = ContinuousClock()
+        let registeredDeadline = clock.now.advanced(by: .seconds(2))
+        while registry.registeredPids.isEmpty, clock.now < registeredDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!registry.registeredPids.isEmpty, "expected the child's pid to be registered while running")
+
+        _ = try await runTask.value
+
+        #expect(registry.registeredPids.isEmpty, "expected the registry to be empty once the run completed")
     }
 }

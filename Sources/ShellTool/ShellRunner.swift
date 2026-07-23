@@ -45,6 +45,16 @@ struct ShellRunner {
     /// without generating 10 MiB of output.
     var maxOutputSize: Int = ShellRunner.defaultMaxOutputSize
 
+    /// The process-group registry the spawned child is registered into for the
+    /// duration of the run and deregistered from on the `defer` teardown site
+    /// below — the backstop `ProcessRegistry.global`'s `atexit` sweep protects
+    /// (see that property's doc comment for the "normal process exit only"
+    /// limitation on what it can catch). Defaults to `ProcessRegistry.global`;
+    /// tests that need to observe or sweep registry state should inject a
+    /// private `ProcessRegistry()` instead (see `ProcessRegistry.global`'s doc
+    /// comment for why).
+    var registry: ProcessRegistry = .global
+
     /// One command execution request.
     struct Request: Sendable {
         /// The command string passed to `sh -c`.
@@ -131,6 +141,7 @@ struct ShellRunner {
         let timeout = request.timeout
         let st = state
         let maxSize = maxOutputSize
+        let reg = registry
 
         let result = try await withTaskCancellationHandler {
             try await Subprocess.run(
@@ -139,11 +150,18 @@ struct ShellRunner {
                 let pid = execution.processIdentifier.value
                 pidBox.withLock { $0 = pid }
                 await st.registerProcess(commandID: commandID, pid: pid)
+                reg.register(pid)
                 // Guaranteed teardown on EVERY body exit path (normal, timeout,
                 // error): group-kill so any backgrounded grandchildren die and
                 // the library's reap can complete. Killing an already-dead group
-                // is a harmless ESRCH.
-                defer { _ = killpg(pid, SIGKILL) }
+                // is a harmless ESRCH. Also deregister from the process-group
+                // registry — the run's own teardown just did the real work
+                // `sweep(_:)` exists to backstop, so there is nothing left here
+                // for a subsequent sweep to (harmlessly) re-kill.
+                defer {
+                    _ = killpg(pid, SIGKILL)
+                    reg.deregister(pid)
+                }
 
                 return try await Self.waitForCompletion(
                     stdout: execution.standardOutput,

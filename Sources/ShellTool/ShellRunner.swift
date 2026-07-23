@@ -253,8 +253,8 @@ struct ShellRunner {
             while let event = try await group.next() {
                 switch event {
                 case .streamFinished:
-                    streamsDone += 1
-                    if streamsDone == outputStreamCount { chunkContinuation.finish() }
+                    Self.handleStreamFinished(
+                        streamsDone: &streamsDone, chunkContinuation: chunkContinuation)
                 case .consumerFinished:
                     consumerDone = true
                 case .timerFinished:
@@ -268,6 +268,22 @@ struct ShellRunner {
         }
 
         return timedOutFlag.withLock { $0 }
+    }
+
+    /// Handles a `.streamFinished` body event: increments `streamsDone` and,
+    /// once both the stdout and stderr readers have reached EOF, finishes
+    /// `chunkContinuation` so the consumer can drain its last chunks and
+    /// seal the buffer. Split out of `waitForCompletion`'s event loop so the
+    /// buffer-sealing decision isn't buried behind a case/switch/while/task-group
+    /// nesting stack.
+    private static func handleStreamFinished(
+        streamsDone: inout Int,
+        chunkContinuation: AsyncStream<StreamChunk>.Continuation
+    ) {
+        streamsDone += 1
+        if streamsDone == outputStreamCount {
+            chunkContinuation.finish()
+        }
     }
 
     /// Turn a completed run's timeout flag and termination status into the

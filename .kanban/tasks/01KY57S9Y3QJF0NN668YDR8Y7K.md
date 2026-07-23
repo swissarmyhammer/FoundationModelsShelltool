@@ -20,8 +20,8 @@ comments:
   timestamp: 2026-07-23T18:35:09.308717+00:00
 depends_on:
 - 01KY57RS5KNHPWKK23SQD0P6VT
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9380'
 title: 'ExecuteCommand waitSeconds: soft-deadline detach and the `running` result shape'
 ---
 ## What

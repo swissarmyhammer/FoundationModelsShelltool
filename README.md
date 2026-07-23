@@ -44,6 +44,35 @@ $ swift run shell-demo history grep --pattern hello
 $ swift run shell-demo lines get --command-id 1
 ```
 
+## Waiting for slow commands
+
+`execute command` takes an optional `waitSeconds` (CLI: `--wait-seconds`; default 30): how long to
+wait for the command before returning with it still `running`. A command that hasn't finished when
+`waitSeconds` elapses comes back with `status: "running"`, a `commandId` to poll or kill, and no
+`exitCode` at all — the key is omitted, not `null`, until the command actually exits. `get lines`
+takes its own `waitSeconds` and long-polls: when the requested range is still empty and the
+command is still `running`, it keeps re-checking until a line lands, the command finishes, or its
+own deadline elapses, instead of the caller burning a call on every re-ask.
+
+A worked example — start a slow command with a short wait so it comes back `running`, keep reading
+its output with a long-poll, then stop it:
+
+```console
+$ swift run shell-demo command execute --command "sleep 30" --wait-seconds 2
+{"commandId":1,"status":"running","lines":0,"durationMs":2000,"output":[],"outputNote":"still running — use get lines (with waitSeconds to wait for more output), kill process to stop, list processes to check status"}
+
+$ swift run shell-demo lines get --command-id 1 --wait-seconds 5
+{"commandId":1,"first":0,"last":0,"lines":[],"status":"running"}
+
+$ swift run shell-demo process kill --id 1
+{"id":1,"command":"sleep 30","linesCaptured":0}
+```
+
+`timeout` and `waitSeconds` are two independent clocks: `timeout` bounds the child process itself
+and keeps ticking even after a call has detached; `waitSeconds` only bounds how long one
+`execute command`/`get lines` call waits before returning. See
+[`DESIGN_NOTES.md`](DESIGN_NOTES.md) (§13, "Two clocks") for the full rationale.
+
 ## Documentation
 
 - [Usage guide](docs/USAGE.md) — declaring operations, fusing them into a `Tool`, registering on

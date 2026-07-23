@@ -92,11 +92,15 @@ sibling package's `DESIGN_NOTES.md` for the fusion machinery's own design ration
 
 ## Departures discovered during implementation
 
-The §8 entries above were decided during planning. The five below were found by a
-plan-deviation audit *after* implementation — shipped behaviors that depart from
-the plan (§3/§4/§8) or from the Rust tool but were not recorded when they were
-made. They are captured here so the plan's "deliberate departures are few and
-recorded" principle holds for the shipped code, not just the design.
+The §8 entries above were decided during planning. Entries 8–12 below were found
+by a plan-deviation audit *after* implementation — shipped behaviors that depart
+from the plan (§3/§4/§8) or from the Rust tool but were not recorded when they
+were made. Entries 13–15 record the soft-deadline detach work (kanban task
+`01KY5PDG4B3WH44FR1ZYCJKMWJ` / `ycjkmwj` and its dependencies), which is itself a
+deliberate departure from the Rust tool's always-blocks-to-completion semantics
+and superseded two of the audit findings (§8, §12) along the way. They are
+captured here so the plan's "deliberate departures are few and recorded"
+principle holds for the shipped code, not just the design.
 
 ### 8. Batch-at-exit log append (superseded)
 
@@ -106,11 +110,27 @@ recorded" principle holds for the shipped code, not just the design.
 one shared `AsyncStream` funnel fed by the two stream readers, so extraction and
 the flush call are never split across concurrent callers (see the file header of
 `Sources/ShellTool/ShellRunner.swift`) — rather than batching everything into one
-`appendLines` call at exit. This closes the gap this entry originally described:
-a command killed *mid-stream* now reports whatever lines had already streamed in
-before the kill, not always `0` (`KillResult.linesCaptured`,
-`Sources/ShellTool/Operations/KillProcess.swift`). The original entry is kept
-below for history.
+`appendLines` call at exit.
+
+The ordering contract this establishes is **arrival-order interleaving**, not
+stdout-then-stderr: stdout and stderr lines land in the log in whichever order
+their chunks actually arrived from the child, interleaved as they happened, not
+every stdout line before every stderr line. This closes the gap this entry
+originally described: a command killed *mid-stream* now reports whatever lines
+had already streamed in before the kill, not always `0` — `KillResult.linesCaptured`
+(`Sources/ShellTool/Operations/KillProcess.swift`) is meaningful mid-stream now,
+not only once a command has exited.
+
+One nuance carried over from `OutputBuffer`'s binary detection (`Sources/ShellTool/OutputBuffer.swift`):
+once a chunk flips `binaryDetected`, `extractCompletedStdoutLines()`/
+`extractCompletedStderrLines()` stop yielding incremental lines, and `finish()`
+emits a single `[Binary content: {n} bytes]` placeholder in their place — but any
+lines a *prior* chunk already flushed into `ShellState` before the flip stay in
+the log exactly as recorded. They are not retracted or replaced by the
+placeholder, so a command whose early output was text and whose later output
+turned out to contain a null byte shows real text lines followed by the
+placeholder, not the placeholder alone. The original entry is kept below for
+history.
 
 `ShellRunner` used to collect a command's output in an `OutputCollector` and call
 `ShellState.appendLines` **once**, after both the stdout and stderr streams had
@@ -166,12 +186,12 @@ directory. `make(context:)` remains available for `@testable` callers.
 **Superseded** by the `waitSeconds` soft-deadline detach (kanban task
 `01KY57S9Y3QJF0NN668YDR8Y7K` / `ydr8y7k`): `ExecuteResult.exitCode` is `Int?`
 again, matching plan §3 after all. `execute command` now exposes
-`ShellRunner.run(_:wait:)`'s soft deadline, and a command still `running`
-when `waitSeconds` elapses has no exit code yet — the field is omitted from
-the encoded JSON (synthesized `encodeIfPresent`, the same technique
-`ProcessRow.exitCode` already used) rather than reporting a placeholder. A
-*finished* command's `exitCode` is populated exactly as the original entry
-below describes, including the `-1` sentinel for a killed or timed-out
+`ShellRunner.run(_:wait:)`'s soft deadline (see §13 below), and a command still
+`running` when `waitSeconds` elapses has no exit code yet — the field is
+omitted while `running`, encoded via `encodeIfPresent` (the same technique
+`ProcessRow.exitCode` already used), rather than reporting a placeholder value.
+A *finished* command's `exitCode` is populated exactly as the original entry
+below describes — the `-1` sentinel is unchanged for a killed or timed-out
 record. The original entry is kept below for history.
 
 Plan §3 spelled the exit code as `Int?`. The shipped `ExecuteResult.exitCode` in
@@ -183,6 +203,76 @@ via `record?.exitCode ?? outcome.exitCode`; a *timed-out* record already stores
 -1)`). Either way the model always sees a concrete integer, with `-1` as the
 sentinel for "died by signal or timeout" — matching the Rust tool's own
 exit-code convention.
+
+### 13. Two clocks — `timeout` bounds the child, `waitSeconds` bounds the tool call
+
+The soft-deadline detach work (kanban task `01KY5PDG4B3WH44FR1ZYCJKMWJ` /
+`ycjkmwj`) introduces two independent clocks, and conflating them is the
+easiest way to misread `execute command`'s behavior. `timeout`
+(`ShellRunner.Request.timeout`) keeps ticking against the **child process**
+regardless of whether anyone is still awaiting it — including after this call
+has detached and returned `running` — because it is enforced inside
+`runBody`'s own timer, which runs to completion in its own supervised `Task`
+independent of `run(_:wait:)`'s caller (see `ShellRunner.swift`'s file
+header). `waitSeconds` (`ExecuteCommand.waitSeconds`, plumbed through to
+`ShellRunner.run(_:wait:)`'s `wait` parameter) bounds only how long **this
+tool call** waits before returning, win or lose — it has no effect on the
+child once the call has returned.
+
+A command started with `timeout: 120, waitSeconds: 5` therefore returns
+`running` after 5 seconds, but the child is still subject to a group-kill at
+the 120-second mark whether or not anyone ever calls `get lines` or `kill
+process` again in between. `waitSeconds` defaults to
+`ExecuteCommand.defaultWaitSeconds` (30 seconds) when omitted — long enough
+that a normal command still returns its result in the same call — and `0`
+detaches immediately: the call returns a `running` snapshot as soon as the
+command has started, without waiting on it at all. See
+`ExecuteCommand.waitDuration(for:)` and `ShellRunner.run(_:wait:)`.
+
+### 14. `execute command` can return `running` — divergence from the Rust blocking semantics
+
+The Rust `shell/execute_command` always blocks until the command finishes (or
+its own `timeout` kills it) and returns exactly one final result. This port
+diverges: once `waitSeconds`'s soft deadline elapses first (see §13 above),
+`execute command` returns `status: "running"` with a `commandID` handle and
+the output captured so far, before the command has finished at all.
+
+That divergence turns `execute command` into the entry point for a polling
+protocol the Rust tool has no equivalent of: `get lines` (which carries its
+own `waitSeconds` and long-polls for more output rather than busy-polling —
+see `GetLines.swift`'s file header), `list processes` (to check status
+without reading output), and `kill process` (to stop the command outright). A
+`running` result's `outputNote` names this protocol directly
+(`ExecuteCommand.runningOutputNote`), so a model reading the result learns
+the follow-up without consulting documentation, exactly as a finished
+result's `outputNote` names the tail-truncation follow-up (`get lines` for
+the rest of the output).
+
+### 15. Cancellation during the wait window detaches rather than kills
+
+Cancelling the `run(_:wait:)` call itself while a finite `wait` is still
+outstanding — e.g. the `Task` running `execute command`'s tool call being
+cancelled mid-wait — detaches rather than kills: it is folded into the same
+race `raceDeadline` already runs against the deadline, so ambient
+cancellation behaves exactly like `waitSeconds` elapsing on its own (see
+`ShellRunner.raceDeadline`'s doc comment). This is a deliberate departure
+from the *unbounded*-wait cancellation contract (`wait: nil`), which still
+group-kills the child immediately on cancellation — a caller that asked to
+wait indefinitely and can no longer wait has no other way to stop the child,
+but a caller that asked for a *bounded* wait already expressed willingness to
+let the command outlive the call if the deadline passed.
+
+The no-leak guarantee for a detached command is therefore carried by a
+different set of mechanisms than an in-flight one: an explicit `kill
+process`, the two output streams reaching EOF (§9 above, unchanged on the
+detached path — the per-run `defer` still group-kills on every body exit,
+detached or not), the command's own `timeout` (§13 above), and
+`ProcessRegistry`'s `atexit`-installed exit sweep as a last-resort backstop.
+**That sweep fires only on a normal process exit** — returning from `main` or
+an explicit `exit(_:)` — **not** on `SIGKILL` or a crash (see
+`ProcessRegistry.global`'s doc comment for the limitation stated in full): a
+detached command orphaned by a killed or crashed host process has no
+guarantee against leaking beyond whatever `timeout` was set on it, if any.
 
 ## Further reading
 

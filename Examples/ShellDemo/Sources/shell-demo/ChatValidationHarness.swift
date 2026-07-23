@@ -3,13 +3,21 @@
 // The full-stack analogue of the upstream `notes --chat` harness, adapted to
 // the shell tool's scenarios. It registers the fused `shell` tool on a
 // `LanguageModelSession` and drives a scripted prompt set that exercises the
-// tool's three signature behaviors:
+// tool's four signature behaviors:
 //
 //   - long output → tail note → follow-up: run a command whose output exceeds
 //     the 32-line tail, so the model sees the "showing last 32 of N lines" note
 //     and follows up with `grep history` / `get lines` to read the rest;
-//   - background process lifecycle: start a `sleep`-style long command, `list
-//     processes` to find it, then `kill process` it;
+//   - corrective kill recovery: ask to kill a command that has already
+//     finished, so `ShellState.killProcess` throws `noRunningProcess` and the
+//     model sees the "No running process" corrective message rather than a
+//     thrown error;
+//   - soft-deadline detach and the polling protocol it opens up: start a long
+//     `sleep` bounded by a short `waitSeconds` so `execute command` comes back
+//     `running` instead of blocking to completion, keep reading its output
+//     with `get lines`'s own `waitSeconds` long-poll, then `kill process` it
+//     while it is genuinely still running — the flagship "execute → running →
+//     get lines long-poll → kill" protocol (see `DESIGN_NOTES.md` §13/§14);
 //   - denied command recovery: ask for `sudo rm -rf /`, which `ShellPolicy`
 //     rejects with a corrective message, and confirm the model rephrases within
 //     the retry cap rather than looping forever.
@@ -40,10 +48,21 @@ enum ChatValidationHarness {
     }
 
     /// The scripted prompt set, in the order a human would run them: a long
-    /// command and its truncation follow-ups, then a background process's
-    /// lifecycle.
+    /// command and its truncation follow-ups, a corrective kill of that
+    /// already-finished command, then the soft-deadline detach and polling
+    /// protocol's own lifecycle (execute-detach → long-poll → genuine kill).
     ///
-    /// Each targets one shell operation.
+    /// Each targets one shell operation. Before the soft-deadline detach work
+    /// (kanban task `01KY5PDG4B3WH44FR1ZYCJKMWJ` / `ycjkmwj`), `execute
+    /// command` always blocked to completion, so a `sleep 60` prompt here
+    /// would already have finished by the time a later "kill it" prompt ran —
+    /// that accidentally exercised the *corrective* "No running process" path
+    /// instead of a genuine kill. The prompts below are re-pointed so each one
+    /// deliberately targets its intended path: prompt 4 below is the
+    /// corrective-kill scenario (killing command 1, the already-finished `seq
+    /// 1 100`), and prompts 5–8 are the genuine-kill scenario, going through
+    /// `waitSeconds` detach and `get lines`'s long-poll first so the command
+    /// really is still running when the kill lands.
     private static let scriptedPrompts: [ScriptedPrompt] = [
         ScriptedPrompt(
             prompt: "Run the command `seq 1 100` and show me its output.",
@@ -55,13 +74,22 @@ enum ChatValidationHarness {
             prompt: "Now show me lines 1 through 5 of that command's output.",
             expectedOp: "get lines"),
         ScriptedPrompt(
-            prompt: "Start a long-running command in the background: run `sleep 60`.",
+            prompt:
+                "That `seq 1 100` command (command id 1) has already finished. Try to kill it anyway, just to confirm it's not running.",
+            expectedOp: "kill process"),
+        ScriptedPrompt(
+            prompt:
+                "Run `sleep 60` in the background, but don't wait more than 2 seconds for it — return control to me even if it's still going.",
             expectedOp: "execute command"),
+        ScriptedPrompt(
+            prompt:
+                "Keep checking that sleep command's output — wait up to 5 seconds for new lines to show up before giving up.",
+            expectedOp: "get lines"),
         ScriptedPrompt(
             prompt: "List all the commands you've run so far with their status.",
             expectedOp: "list processes"),
         ScriptedPrompt(
-            prompt: "Kill the sleep command — it has command id 2.",
+            prompt: "That sleep command is genuinely still running in the background right now — kill it.",
             expectedOp: "kill process"),
     ]
 

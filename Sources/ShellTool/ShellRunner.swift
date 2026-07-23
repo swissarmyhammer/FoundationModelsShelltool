@@ -128,9 +128,9 @@ struct ShellRunner {
         )
 
         let pidBox = Mutex<pid_t>(0)
-        let timedOutFlag = Mutex<Bool>(false)
         let timeout = request.timeout
         let st = state
+        let maxSize = maxOutputSize
 
         let result = try await withTaskCancellationHandler {
             try await Subprocess.run(
@@ -145,59 +145,15 @@ struct ShellRunner {
                 // is a harmless ESRCH.
                 defer { _ = killpg(pid, SIGKILL) }
 
-                let (chunkStream, chunkContinuation) = AsyncStream<StreamChunk>.makeStream()
-                try await withThrowingTaskGroup(of: BodyEvent.self) { group in
-                    let out = execution.standardOutput
-                    let err = execution.standardError
-                    group.addTask {
-                        await Self.drain(out, isStdout: true, into: chunkContinuation)
-                        return .streamFinished
-                    }
-                    group.addTask {
-                        await Self.drain(err, isStdout: false, into: chunkContinuation)
-                        return .streamFinished
-                    }
-                    group.addTask {
-                        try await Self.consume(
-                            chunkStream, state: st, commandID: commandID, maxSize: maxOutputSize)
-                        return .consumerFinished
-                    }
-                    if let timeout {
-                        group.addTask {
-                            if (try? await Task.sleep(for: timeout)) != nil {
-                                timedOutFlag.withLock { $0 = true }
-                                _ = killpg(pid, SIGKILL)
-                            }
-                            return .timerFinished
-                        }
-                    }
-
-                    // Both readers hitting EOF ends the chunk stream (so the
-                    // consumer can drain the last chunks, seal the buffer, and
-                    // return); only once the consumer has ALSO finished is
-                    // there nothing left to wait for — cancelling any still-
-                    // pending timer at that point (post-stream-EOF races the
-                    // timeout, matching the existing `run` semantics).
-                    var streamsDone = 0
-                    var consumerDone = false
-                    while let event = try await group.next() {
-                        switch event {
-                        case .streamFinished:
-                            streamsDone += 1
-                            if streamsDone == 2 { chunkContinuation.finish() }
-                        case .consumerFinished:
-                            consumerDone = true
-                        case .timerFinished:
-                            break
-                        }
-                        if streamsDone == 2, consumerDone {
-                            group.cancelAll()
-                            break
-                        }
-                    }
-                }
-
-                return timedOutFlag.withLock { $0 }
+                return try await Self.waitForCompletion(
+                    stdout: execution.standardOutput,
+                    stderr: execution.standardError,
+                    state: st,
+                    commandID: commandID,
+                    maxSize: maxSize,
+                    timeout: timeout,
+                    pid: pid
+                )
             }
         } onCancel: {
             // External cancellation: kill the group immediately so the child's
@@ -207,22 +163,8 @@ struct ShellRunner {
             if pid != 0 { _ = killpg(pid, SIGKILL) }
         }
 
-        let timedOut = result.closureResult
-        let status: CommandStatus
-        let exitCode: Int
-        if timedOut {
-            status = .timedOut
-            exitCode = -1
-        } else {
-            switch result.terminationStatus {
-            case .exited(let code):
-                exitCode = Int(code)
-                status = .completed
-            case .signaled:
-                exitCode = -1
-                status = .completed
-            }
-        }
+        let (status, exitCode) = Self.finalizeResult(
+            timedOut: result.closureResult, terminationStatus: result.terminationStatus)
 
         // Atomic transition: only finalize if still running, so a concurrent
         // `kill process` op that already marked the record `.killed` is not
@@ -230,6 +172,103 @@ struct ShellRunner {
         await state.completeIfRunning(commandID: commandID, status: status, exitCode: exitCode)
 
         return Outcome(commandID: commandID, status: status, exitCode: exitCode)
+    }
+
+    /// Number of output streams a child produces (stdout + stderr) — the
+    /// count `waitForCompletion` waits to see reach EOF before closing the
+    /// chunk stream, so the consumer can drain its last chunks and seal the
+    /// buffer.
+    private static let outputStreamCount = 2
+
+    /// Run the output-streaming task group to completion for one child: the
+    /// two stream readers (`stdout`, `stderr`) funnel raw chunks into a
+    /// shared `AsyncStream`, a single consumer task drains and flushes them
+    /// to `state.appendLines` in arrival order (see the file header), and an
+    /// optional timer kills `pid`'s process group if `timeout` elapses first.
+    /// Returns once both streams have reached EOF and the consumer has
+    /// finished sealing the buffer — only then is any still-pending timer
+    /// cancelled (a post-EOF race against the timeout, matching `run`'s
+    /// existing semantics) — reporting whether the timer fired first.
+    private static func waitForCompletion(
+        stdout: SubprocessOutputSequence,
+        stderr: SubprocessOutputSequence,
+        state: ShellState,
+        commandID: Int,
+        maxSize: Int,
+        timeout: Duration?,
+        pid: pid_t
+    ) async throws -> Bool {
+        let timedOutFlag = Mutex<Bool>(false)
+        let (chunkStream, chunkContinuation) = AsyncStream<StreamChunk>.makeStream()
+        try await withThrowingTaskGroup(of: BodyEvent.self) { group in
+            group.addTask {
+                await Self.drain(stdout, isStdout: true, into: chunkContinuation)
+                return .streamFinished
+            }
+            group.addTask {
+                await Self.drain(stderr, isStdout: false, into: chunkContinuation)
+                return .streamFinished
+            }
+            group.addTask {
+                try await Self.consume(
+                    chunkStream, state: state, commandID: commandID, maxSize: maxSize)
+                return .consumerFinished
+            }
+            if let timeout {
+                group.addTask {
+                    if (try? await Task.sleep(for: timeout)) != nil {
+                        timedOutFlag.withLock { $0 = true }
+                        _ = killpg(pid, SIGKILL)
+                    }
+                    return .timerFinished
+                }
+            }
+
+            // Both readers hitting EOF ends the chunk stream (so the
+            // consumer can drain the last chunks, seal the buffer, and
+            // return); only once the consumer has ALSO finished is there
+            // nothing left to wait for — cancelling any still-pending timer
+            // at that point (post-stream-EOF races the timeout, matching the
+            // existing `run` semantics).
+            var streamsDone = 0
+            var consumerDone = false
+            while let event = try await group.next() {
+                switch event {
+                case .streamFinished:
+                    streamsDone += 1
+                    if streamsDone == outputStreamCount { chunkContinuation.finish() }
+                case .consumerFinished:
+                    consumerDone = true
+                case .timerFinished:
+                    break
+                }
+                if streamsDone == outputStreamCount, consumerDone {
+                    group.cancelAll()
+                    break
+                }
+            }
+        }
+
+        return timedOutFlag.withLock { $0 }
+    }
+
+    /// Turn a completed run's timeout flag and termination status into the
+    /// `(status, exitCode)` pair `run` records and returns: a timeout always
+    /// reports `.timedOut`/`-1` regardless of how the process actually died
+    /// (killed by our own `SIGKILL`); otherwise a normal exit reports its own
+    /// code and a signal death reports `-1` (Rust parity — both `.completed`).
+    private static func finalizeResult(
+        timedOut: Bool, terminationStatus: TerminationStatus
+    ) -> (status: CommandStatus, exitCode: Int) {
+        if timedOut {
+            return (.timedOut, -1)
+        }
+        switch terminationStatus {
+        case .exited(let code):
+            return (.completed, Int(code))
+        case .signaled:
+            return (.completed, -1)
+        }
     }
 
     /// Platform options that put the child in its own process group (pgid ==

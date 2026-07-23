@@ -24,6 +24,21 @@ comments:
 
     Leaving in `doing` for review per the implement workflow.
   timestamp: 2026-07-23T14:13:19.167393+00:00
+- actor: claude-code
+  id: 01ky7rbyas24xge2cnczk0r2d4
+  text: |-
+    Resolved all 5 confirmed review findings (2026-07-23 09:21 checklist), root-cause fixed across the whole file per the review-findings rule:
+
+    1. Sources/ShellTool/OutputBuffer.swift: deleted the entire dead batch-at-exit trimming path — addTruncationMarker(), makeRoom(for:), trimBuffer(_:neededSpace:), trimToLineBoundary(_:) — none had production callers post-incremental-refactor. Removed the one test that only existed to exercise addTruncationMarker() (truncationMarkerAppendedWhenTruncatedAndItFits in OutputBufferTests.swift); kept finishAppendsTheTruncationMarkerAsItsOwnLine, which exercises the current finish()-based truncation-marker path.
+    2. Same file: redefined the `truncationMarker` static constant to be the plain marker line (dropped the leading "\n" prefix that only the now-deleted addTruncationMarker() needed) and made finish() use `Self.truncationMarker` instead of a duplicate string literal. Updated the doc comments on the constant and on finish() that referenced the deleted method.
+    3. Sources/ShellTool/ShellRunner.swift: extracted `waitForCompletion(stdout:stderr:state:commandID:maxSize:timeout:pid:) -> Bool` (task-group setup + addTask calls + the streamsDone/consumerDone wait loop) and `finalizeResult(timedOut:terminationStatus:) -> (status:exitCode:)` (the if/switch after the subprocess result) out of `run`, which now just builds the config, runs the subprocess body via `waitForCompletion`, and finalizes. Had to move `timedOutFlag: Mutex<Bool>` from a `run`-level local into a local inside `waitForCompletion` itself and have it return `Bool` — passing a noncopyable `Mutex<Bool>` as a plain function parameter doesn't compile ("must specify ownership"); keeping it function-local and returning the flag avoids the ownership annotation entirely and is cleaner than borrowing.
+    4. Same file: added `private static let outputStreamCount = 2` and replaced both magic-literal `2` comparisons in the wait loop.
+    5. Sources/ShellTool/ShellState.swift: added `private static let defaultGrepResultLimit = 10` and changed `grep`'s `let cap = limit ?? 10` to use it; updated the doc comment.
+
+    Verification: `swift build` clean (0 errors/warnings), `swift test` — 165 tests / 16 suites, 0 failures (166→165: the one addTruncationMarker-only test was removed, matching the task's "possibly with fewer tests" expectation). `mcp__sah__diagnostics check working` reports 0 errors/0 warnings.
+
+    Leaving in `doing` per the implement workflow — ready for /review.
+  timestamp: 2026-07-23T15:09:09.849250+00:00
 position_column: doing
 position_ordinal: '80'
 title: 'Incremental output recording: stream lines into ShellState while a command runs'
@@ -60,3 +75,15 @@ Keep `ExecuteCommand`'s tail assembly working unchanged (it reads stored lines a
 
 ## Workflow
 - Use `/tdd` — write failing tests first, then implement to make them pass. #long-running
+
+## Review Findings (2026-07-23 09:21)
+
+- [x] `Sources/ShellTool/OutputBuffer.swift:140` — addTruncationMarker() has no production callers. It is only exercised in OutputBufferTests.swift and was replaced by finish(), which handles truncation-marker appending inline. With the shift from batch-at-exit to incremental output recording, this method and its supporting helpers became dead. Delete addTruncationMarker() and its dependent helper methods (makeRoom, trimBuffer). The finish() method supersedes this entire pattern.
+- [x] `Sources/ShellTool/OutputBuffer.swift:148` — makeRoom(for:) is a private helper called only by the dead addTruncationMarker() method. With addTruncationMarker() removed, this method becomes unreachable from production code. Delete makeRoom() as it serves only dead code.
+- [x] `Sources/ShellTool/OutputBuffer.swift:154` — trimBuffer(_:neededSpace:) is a private static helper called only by the dead makeRoom() method. Removing makeRoom() leaves this method unreachable from production code. Delete trimBuffer() as it serves only dead code.
+- [x] `Sources/ShellTool/OutputBuffer.swift:260` — Hardcoded truncation marker string '[Output truncated - exceeded size limit]' appears in the finish() method and duplicates the marker text from the truncationMarker constant (line 27, which includes a newline prefix). The non-newline variant should be extracted into a separate named constant to avoid duplication. Extract a constant: `private static let truncationMarkerLine = "[Output truncated - exceeded size limit]"`, then update line 260 to use `let marker = Self.truncationMarkerLine`.
+- [x] `Sources/ShellTool/OutputBuffer.swift:324` — trimToLineBoundary(_:) is a private static helper called only by the dead trimBuffer() method. Removing trimBuffer() leaves this method unreachable from production code. Delete trimToLineBoundary() as it serves only the dead trimBuffer().
+- [x] `Sources/ShellTool/ShellRunner.swift:69` — The `run` function has 4+ levels of nested control structures (withTaskCancellationHandler → Subprocess.run closure → withThrowingTaskGroup → while loop → switch statement), combined with complex task coordination logic tracking multiple state variables (streamsDone, consumerDone, timedOutFlag). The function is difficult to follow due to interacting async contexts and conditional branches scattered across nesting levels. Extract the task group coordination logic into a separate helper function (e.g., `private func waitForCompletion(...)`), and extract the result processing (if timedOut...else switch) into another helper. This reduces the main `run` function to a clear orchestration of three steps: start command, run subprocess with coordination, finalize result.
+- [x] `Sources/ShellTool/ShellRunner.swift:165` — Hardcoded literal '2' representing the fixed count of output streams (stdout, stderr) appears twice (lines 165, 167) in the event-loop state machine and should be extracted into a named constant so the intent is explicit and changes are made in one place. Extract at the start of the method: `let expectedStreamCount = 2  // stdout + stderr`, then replace both occurrences with `expectedStreamCount`.
+- [x] `Sources/ShellTool/ShellRunner.swift:167` — Hardcoded literal '2' (see line 165 — second occurrence of the same stream-count check). Use the same named constant as suggested for line 165.
+- [x] `Sources/ShellTool/ShellState.swift:192` — Hardcoded default grep result limit '10' should be extracted into a named constant so the limit is discoverable and changes are made in one place. Extract a named constant: `private static let defaultGrepResultLimit = 10`, then use `let cap = limit ?? Self.defaultGrepResultLimit`.

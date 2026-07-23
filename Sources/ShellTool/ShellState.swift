@@ -287,13 +287,17 @@ actor ShellState {
         return results
     }
 
+    /// The default cap on results returned by `grep` when the caller doesn't
+    /// specify `limit`.
+    private static let defaultGrepResultLimit = 10
+
     /// Search this session's log lines with a regex, optionally scoped to one
     /// `commandID`. `literal: true` pre-escapes the pattern so it matches
     /// verbatim. Matching is line-by-line — one command's binary garbage can't
-    /// break another's search — and capped at `limit` (default 10), while
-    /// `total` reflects every match found.
+    /// break another's search — and capped at `limit` (default
+    /// `defaultGrepResultLimit`), while `total` reflects every match found.
     func grep(pattern: String, literal: Bool = false, commandID: Int? = nil, limit: Int? = nil) throws -> GrepResults {
-        let cap = limit ?? 10
+        let cap = limit ?? Self.defaultGrepResultLimit
         let source = literal ? NSRegularExpression.escapedPattern(for: pattern) : pattern
         let regex: Regex<AnyRegexOutput>
         do {

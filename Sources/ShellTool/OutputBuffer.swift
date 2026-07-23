@@ -46,8 +46,8 @@ import Foundation
 
 /// A size-capped capture buffer for one command's stdout and stderr.
 struct OutputBuffer {
-    /// The `\n`-prefixed marker appended when output was truncated.
-    static let truncationMarker = "\n[Output truncated - exceeded size limit]"
+    /// The marker line `finish()` appends when output was truncated.
+    static let truncationMarker = "[Output truncated - exceeded size limit]"
     /// Bytes of an appended chunk scanned for a null byte during binary sniffing.
     static let binaryDetectionSampleBytes = 8 * 1024
     /// The `\n` byte the shell log is split, truncated, and trimmed on.
@@ -145,48 +145,6 @@ struct OutputBuffer {
         return actual
     }
 
-    // MARK: - Truncation marker
-
-    /// Append the truncation marker if output was truncated and the marker fits
-    /// within the cap, making room by trimming stored bytes to a line boundary.
-    mutating func addTruncationMarker() {
-        guard truncated else { return }
-
-        let marker = Array(Self.truncationMarker.utf8)
-        var available = max(0, maxSize - currentSize)
-        if available < marker.count {
-            makeRoom(for: marker.count - available)
-        }
-        available = max(0, maxSize - currentSize)
-        guard available >= marker.count else { return }
-
-        if !stdoutData.isEmpty {
-            stdoutData.append(contentsOf: marker)
-        } else if !stderrData.isEmpty {
-            stderrData.append(contentsOf: marker)
-        } else {
-            stdoutData.append(contentsOf: marker)
-        }
-    }
-
-    private mutating func makeRoom(for neededSpace: Int) {
-        if !stdoutData.isEmpty {
-            Self.trimBuffer(&stdoutData, neededSpace: neededSpace)
-        } else if !stderrData.isEmpty {
-            Self.trimBuffer(&stderrData, neededSpace: neededSpace)
-        }
-    }
-
-    /// Drop up to `neededSpace` bytes off the end of `buffer`, then trim back to
-    /// the last line boundary. Shared by `makeRoom`'s stdout/stderr branches so
-    /// the drop-then-trim step lives in one place. Static (like
-    /// `trimToLineBoundary`) so a branch can pass `&stdoutData`/`&stderrData`
-    /// without an exclusive-access conflict on `self`.
-    private static func trimBuffer(_ buffer: inout [UInt8], neededSpace: Int) {
-        buffer.removeLast(min(neededSpace, buffer.count))
-        trimToLineBoundary(&buffer)
-    }
-
     // MARK: - Incremental completed-line extraction
 
     /// Extract stdout bytes completed since the last extraction — everything
@@ -248,9 +206,9 @@ struct OutputBuffer {
     ///   point reflects only whatever hasn't yet been incrementally flushed.
     /// - Otherwise, each stream's still-buffered trailing partial line (text
     ///   with no closing `\n`) is flushed. If output was truncated, the
-    ///   truncation-marker line is appended after whichever stream has a
-    ///   trailing line (preferring stdout, matching `addTruncationMarker`'s
-    ///   stdout-first preference), or into `stdout` if neither stream has one.
+    ///   truncation-marker line (`Self.truncationMarker`) is appended after
+    ///   whichever stream has a trailing line, preferring stdout, or into
+    ///   `stdout` if neither stream has one.
     mutating func finish() -> FinalLines {
         if binaryDetected {
             stdoutData = []
@@ -269,7 +227,7 @@ struct OutputBuffer {
         }
 
         if truncated {
-            let marker = "[Output truncated - exceeded size limit]"
+            let marker = Self.truncationMarker
             if !result.stdout.isEmpty {
                 result.stdout.append(marker)
             } else if !result.stderr.isEmpty {
@@ -299,12 +257,6 @@ struct OutputBuffer {
             }
         }
         return limit
-    }
-
-    private static func trimToLineBoundary(_ buffer: inout [UInt8]) {
-        while let last = buffer.last, last != Self.newlineByte {
-            buffer.removeLast()
-        }
     }
 
     /// Whether `data` looks binary: a null byte in its first 8 KiB.

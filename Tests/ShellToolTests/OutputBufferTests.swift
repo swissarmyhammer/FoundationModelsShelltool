@@ -63,14 +63,6 @@ import Testing
         #expect(buffer.stdoutLines == ["line1", "line2"])
     }
 
-    @Test func truncationMarkerAppendedWhenTruncatedAndItFits() {
-        var buffer = OutputBuffer(maxSize: 60)
-        _ = buffer.appendStdout([UInt8](repeating: UInt8(ascii: "a"), count: 100))
-        buffer.addTruncationMarker()
-        #expect(buffer.truncated)
-        #expect(buffer.stdout.contains("[Output truncated - exceeded size limit]"))
-    }
-
     // MARK: - Binary detection
 
     @Test func nullByteMarksContentBinaryAndReplacesOutput() {

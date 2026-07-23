@@ -42,6 +42,7 @@
 // dequeues chunks from the stream.
 
 import Foundation
+import Operations
 import Subprocess
 import Synchronization
 import System
@@ -77,6 +78,32 @@ struct ShellRunner {
     /// about supervision needs `ProcessRegistry.global`'s process-wide
     /// sharing.
     var supervisor: RunSupervisor = RunSupervisor()
+
+    /// The default throttle interval between successive `.progress` events
+    /// posted for one detached command (5s) — long enough to stay well clear
+    /// of noise for a chatty command, short enough that a host still sees
+    /// meaningful movement without polling.
+    static let defaultProgressInterval: Duration = .seconds(5)
+
+    /// The throttle interval between successive `.progress` events posted
+    /// for one detached command. Defaults to `defaultProgressInterval`;
+    /// injectable so tests can observe throttling without a real 5s wait.
+    var progressInterval: Duration = ShellRunner.defaultProgressInterval
+
+    /// The event-posting route for a command's detached, background phase:
+    /// the sink `run(_:wait:events:)` posts to, plus the `OperationEvent`
+    /// `tool`/`op` fields every event it posts carries. `nil` (the default at
+    /// every call site with no connected sink) means the runner posts
+    /// nothing at all — matching `EventEmittingContext`'s "no sink connected
+    /// = safely a no-op" contract; see `ShellContext.operationEventSink`.
+    struct DetachedEventRoute: Sendable {
+        /// The sink every event is posted to.
+        let sink: any OperationEventSink
+        /// The `OperationEvent.tool` every posted event carries.
+        let tool: String
+        /// The `OperationEvent.op` every posted event carries.
+        let op: String
+    }
 
     /// One command execution request.
     struct Request: Sendable {
@@ -215,7 +242,17 @@ struct ShellRunner {
     /// (`check(command:)` / `check(environment:)`), which the caller runs before
     /// `run`. The runner accepts pre-validated input and does not duplicate those
     /// limits — the only cap it owns is the captured-output size (`maxOutputSize`).
-    func run(_ request: Request, wait: Duration?) async throws -> RunResult {
+    ///
+    /// `events`, when non-`nil`, is the detached-phase event route — captured
+    /// by the caller once, at operation start, from the connected context's
+    /// sink (see `EventEmittingContext`'s capture-at-start rule). It is
+    /// consulted only if this call actually detaches (the finite-`wait`
+    /// branch returning `.running`): a command that finishes within `wait`
+    /// posts nothing, its result already delivered in-band. Once detached,
+    /// throttled `.progress` events (at most one per `progressInterval`) are
+    /// posted while the command keeps running, followed by exactly one
+    /// `.completed` event once it finalizes (`completed`/`timed_out`/`killed`).
+    func run(_ request: Request, wait: Duration?, events: DetachedEventRoute? = nil) async throws -> RunResult {
         let commandID = await state.startCommand(request.command)
         let pidBox = Mutex<pid_t>(0)
         let st = state
@@ -258,6 +295,15 @@ struct ShellRunner {
         case .bodyFailed(let message):
             throw BodyFailure(underlyingMessage: message)
         case .deadline:
+            // The command has just detached: kick off its background event
+            // posting (throttled `.progress` while it keeps running, one
+            // `.completed` once it finalizes) without waiting on it here —
+            // `run(_:wait:)` returns `.running` immediately either way.
+            if let events {
+                Self.postDetachedEvents(
+                    command: request.command, commandID: commandID, bodyTask: bodyTask,
+                    state: st, route: events, progressInterval: progressInterval)
+            }
             return .running(commandID)
         }
     }
@@ -330,6 +376,145 @@ struct ShellRunner {
         await state.completeIfRunning(commandID: commandID, status: status, exitCode: exitCode)
 
         return Outcome(commandID: commandID, status: status, exitCode: exitCode)
+    }
+
+    // MARK: - Detached-phase event posting
+
+    /// Kicks off — fire-and-forget, in its own unstructured `Task` — the
+    /// background posting loop for a command that has just detached: see
+    /// `runDetachedEventLoop`. Split out of the `.deadline` call site purely
+    /// so that site reads as one call rather than an inline `Task { … }`.
+    private static func postDetachedEvents(
+        command: String,
+        commandID: Int,
+        bodyTask: Task<Outcome, Error>,
+        state: ShellState,
+        route: DetachedEventRoute,
+        progressInterval: Duration
+    ) {
+        Task {
+            await Self.runDetachedEventLoop(
+                command: command, commandID: commandID, bodyTask: bodyTask,
+                state: state, route: route, progressInterval: progressInterval)
+        }
+    }
+
+    /// What `runDetachedEventLoop`'s merged task group is racing: `bodyTask`
+    /// settling, or a throttle tick elapsing.
+    private enum DetachedLoopEvent: Sendable {
+        /// A `progressInterval` tick elapsed while the command is (as far as
+        /// this loop knows) still running.
+        case tick
+        /// `bodyTask` finished normally, carrying its outcome.
+        case finished(Outcome)
+        /// `bodyTask` threw (e.g. a spawn failure) — nothing more to post.
+        case failed
+    }
+
+    /// Posts throttled `.progress` events (at most one per `progressInterval`)
+    /// for as long as `bodyTask` keeps running, then exactly one `.completed`
+    /// event once it settles successfully — mirroring `waitForCompletion`'s
+    /// task-group merge technique (see the file header) rather than a
+    /// sleep-then-poll loop, so the final tick never races a redundant
+    /// `.progress` past the `.completed` it precedes.
+    private static func runDetachedEventLoop(
+        command: String,
+        commandID: Int,
+        bodyTask: Task<Outcome, Error>,
+        state: ShellState,
+        route: DetachedEventRoute,
+        progressInterval: Duration
+    ) async {
+        await withTaskGroup(of: DetachedLoopEvent.self) { group in
+            group.addTask {
+                do {
+                    return .finished(try await bodyTask.value)
+                } catch {
+                    return .failed
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: progressInterval)
+                return .tick
+            }
+
+            while let event = await group.next() {
+                switch event {
+                case .tick:
+                    let lineCount = await state.record(commandID: commandID)?.lineCount ?? 0
+                    await route.sink.post(
+                        OperationEvent(
+                            tool: route.tool, op: route.op, correlationID: String(commandID),
+                            kind: .progress, detail: Self.encodeDetailJSON(ProgressEventDetail(lines: lineCount))))
+                    group.addTask {
+                        try? await Task.sleep(for: progressInterval)
+                        return .tick
+                    }
+                case .finished(let outcome):
+                    group.cancelAll()
+                    await Self.postCompletedEvent(command: command, commandID: commandID, outcome: outcome, state: state, route: route)
+                    return
+                case .failed:
+                    group.cancelAll()
+                    return
+                }
+            }
+        }
+    }
+
+    /// Posts the single `.completed` event for a detached command once its
+    /// `bodyTask` has settled: reads back the authoritative `ShellState`
+    /// record (rather than trusting `outcome` alone) so a concurrent `kill
+    /// process` — which flips the record to `.killed` without `runBody`
+    /// itself ever observing that — is reported faithfully, the same
+    /// record-over-outcome precedence `ExecuteCommand.result(for:in:)` uses.
+    private static func postCompletedEvent(
+        command: String, commandID: Int, outcome: Outcome, state: ShellState, route: DetachedEventRoute
+    ) async {
+        let record = await state.record(commandID: commandID)
+        let detail = CompletedEventDetail(
+            command: command,
+            status: (record?.status ?? outcome.status).rawValue,
+            exitCode: record?.exitCode ?? outcome.exitCode,
+            lines: record?.lineCount ?? 0,
+            durationMs: record?.durationMs ?? 0
+        )
+        await route.sink.post(
+            OperationEvent(
+                tool: route.tool, op: route.op, correlationID: String(commandID),
+                kind: .completed, detail: Self.encodeDetailJSON(detail)))
+    }
+
+    /// The JSON `detail` payload of a detached command's `.completed` event.
+    private struct CompletedEventDetail: Encodable, Sendable {
+        /// The command string that was run.
+        let command: String
+        /// Final status: `completed`, `timed_out`, or `killed`.
+        let status: String
+        /// Process exit code; `-1` for a timeout, signal death, or kill.
+        let exitCode: Int
+        /// Total number of stored output lines (stdout then stderr).
+        let lines: Int
+        /// Elapsed run time in whole milliseconds.
+        let durationMs: Int
+    }
+
+    /// The JSON `detail` payload of a detached command's throttled
+    /// `.progress` event.
+    private struct ProgressEventDetail: Encodable, Sendable {
+        /// Total number of stored output lines recorded so far.
+        let lines: Int
+    }
+
+    /// JSON-encodes `detail`, falling back to `"{}"` on the practically
+    /// impossible encoding failure of these plain value-only structs — so a
+    /// detail-encoding hiccup can never crash the detached posting loop or
+    /// silently drop the event outright.
+    private static func encodeDetailJSON<T: Encodable>(_ detail: T) -> String {
+        guard let data = try? JSONEncoder().encode(detail), let json = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return json
     }
 
     /// The event produced first by `raceDeadline`: the body settling —

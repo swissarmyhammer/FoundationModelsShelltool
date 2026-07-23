@@ -93,7 +93,15 @@ extension ExecuteCommand {
     /// short-circuits to a corrective message. On success the command is run to
     /// completion and its stored output tail is formatted into an
     /// `ExecuteResult`.
+    ///
+    /// **Event capture-at-start.** `context.operationEventSink` is read
+    /// exactly once, right here — before any `await` — into `eventSink`, per
+    /// `EventEmittingContext`'s capture-at-start rule: ownership of a
+    /// detached command's posted events stays with the session whose turn
+    /// started it, regardless of any later `connecting(_:)` re-instancing.
     func execute(in context: ShellContext) async throws -> ExecuteOutput {
+        let eventSink = context.operationEventSink
+
         // Checked first, before any read or spawn — mirroring `GetLines`'s
         // identical `waitSeconds` convention (see that op's file header).
         if let waitSeconds, waitSeconds < 0 {
@@ -131,7 +139,15 @@ extension ExecuteCommand {
             environment: parsedEnvironment,
             timeout: timeout.map { .seconds($0) }
         )
-        switch try await context.runner.run(request, wait: Self.waitDuration(for: waitSeconds)) {
+        // Built from `eventSink` (captured at the top of this call) rather
+        // than re-reading `context.operationEventSink` — see this method's
+        // doc comment. `nil` when no sink is connected, so the runner posts
+        // nothing at all for this command (its detached path treats a `nil`
+        // route as a no-op).
+        let events = eventSink.map { sink in
+            ShellRunner.DetachedEventRoute(sink: sink, tool: ShellTool.name, op: Self.opString)
+        }
+        switch try await context.runner.run(request, wait: Self.waitDuration(for: waitSeconds), events: events) {
         case .finished(let outcome):
             return .ran(await Self.result(for: outcome, in: context))
         case .running(let commandID):
@@ -166,7 +182,7 @@ extension ExecuteCommand {
     private static func result(
         for outcome: ShellRunner.Outcome, in context: ShellContext
     ) async -> ExecuteResult {
-        let record = await context.state.listCommands().first { $0.id == outcome.commandID }
+        let record = await context.state.record(commandID: outcome.commandID)
         let stored = (try? await context.state.getLines(commandID: outcome.commandID)) ?? []
         let total = stored.count
         let output = stored.suffix(tailLineCount).map { "\($0.lineNumber): \($0.text)" }
@@ -180,7 +196,7 @@ extension ExecuteCommand {
             status: (record?.status ?? outcome.status).rawValue,
             exitCode: record?.exitCode ?? outcome.exitCode,
             lines: total,
-            durationMs: record.map(durationMs) ?? 0,
+            durationMs: record?.durationMs ?? 0,
             output: output,
             outputNote: note
         )
@@ -204,7 +220,7 @@ extension ExecuteCommand {
     /// completion instant (see `CommandRecord.duration`), so it reports
     /// elapsed-so-far exactly as a `running` snapshot should.
     private static func runningResult(commandID: Int, in context: ShellContext) async -> ExecuteResult {
-        let record = await context.state.listCommands().first { $0.id == commandID }
+        let record = await context.state.record(commandID: commandID)
         let stored = (try? await context.state.getLines(commandID: commandID)) ?? []
         let output = stored.suffix(tailLineCount).map { "\($0.lineNumber): \($0.text)" }
 
@@ -213,17 +229,10 @@ extension ExecuteCommand {
             status: CommandStatus.running.rawValue,
             exitCode: nil,
             lines: stored.count,
-            durationMs: record.map(durationMs) ?? 0,
+            durationMs: record?.durationMs ?? 0,
             output: output,
             outputNote: runningOutputNote
         )
-    }
-
-    /// A command's elapsed run time in whole milliseconds, from its record's
-    /// `Duration` (seconds plus attoseconds; `1e15` attoseconds per ms).
-    private static func durationMs(_ record: CommandRecord) -> Int {
-        let (seconds, attoseconds) = record.duration.components
-        return Int(seconds) * 1000 + Int(attoseconds / 1_000_000_000_000_000)
     }
 
     /// Parse the `environment` JSON string into a `[String: String]` map.

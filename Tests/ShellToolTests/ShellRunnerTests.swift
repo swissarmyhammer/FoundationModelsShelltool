@@ -1,4 +1,5 @@
 import Foundation
+import Operations
 import Testing
 
 @testable import ShellTool
@@ -513,5 +514,55 @@ import Testing
         let survivors = await waitForProcessCount(
             matching: pattern, deadline: .seconds(2), until: { $0 == 0 })
         #expect(survivors == 0)
+    }
+
+    // MARK: - Detached-phase event posting: default constant + throttled progress
+
+    @Test func defaultProgressIntervalIsFiveSeconds() {
+        #expect(ShellRunner.defaultProgressInterval == .seconds(5))
+    }
+
+    /// `.progress` events are throttled to at most one per `progressInterval`
+    /// while a detached command keeps running — asserted via an injected,
+    /// short interval rather than the real 5s default, per the acceptance
+    /// criterion. A command that keeps running for several multiples of the
+    /// interval yields roughly that many progress ticks before its single
+    /// trailing `.completed`, never more than the interval count would allow.
+    @Test func progressEventsAreThrottledToTheInjectedInterval() async throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shellrunner-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let state = try ShellState(preferredDirectory: tmp.appendingPathComponent(".shell"))
+        var runner = ShellRunner(state: state, registry: ProcessRegistry())
+        runner.progressInterval = .milliseconds(100)
+
+        let sink = FakeShellEventSinkActor()
+        let route = ShellRunner.DetachedEventRoute(sink: sink, tool: "shell", op: "execute command")
+
+        // ~500ms of runtime at a 100ms throttle: expect several progress
+        // ticks (not zero, not dozens) before the trailing completed event.
+        let result = try await runner.run(
+            .init(command: "sleep 0.5"), wait: .milliseconds(10), events: route)
+        guard case .running(let commandID) = result else {
+            Issue.record("expected .running, got \(result)")
+            return
+        }
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        var events = await sink.events
+        while events.last?.kind != .completed, clock.now - start < .seconds(3) {
+            try? await Task.sleep(for: .milliseconds(25))
+            events = await sink.events
+        }
+
+        #expect(events.last?.kind == .completed, "expected a trailing .completed event, got \(events.map(\.kind))")
+        let progressCount = events.filter { $0.kind == .progress }.count
+        // ~500ms / 100ms throttle ≈ 4-5 ticks; generous bounds absorb timing
+        // jitter while still proving throttling (not one-per-line, not zero).
+        #expect(progressCount >= 2, "expected multiple throttled progress ticks, got \(progressCount)")
+        #expect(progressCount <= 8, "expected throttling to bound the tick count, got \(progressCount)")
+        #expect(events.allSatisfy { $0.correlationID == String(commandID) })
     }
 }

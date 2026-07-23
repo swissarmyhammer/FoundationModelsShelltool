@@ -84,8 +84,8 @@ comments:
 depends_on:
 - 01KY57S9Y3QJF0NN668YDR8Y7K
 - 01KY57SQEF3368T4GK7T3ZF09S
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9480'
 title: DESIGN_NOTES, README, and doc-pinning test sweep for soft-deadline detach
 ---
 ## What

@@ -55,6 +55,16 @@ struct CommandRecord: Sendable {
     var duration: Duration {
         startedAt.duration(to: completedAt ?? ContinuousClock().now)
     }
+
+    /// `duration`, truncated to whole milliseconds — the single source of
+    /// truth both `ExecuteCommand`'s response and `ShellRunner`'s posted
+    /// `.completed` event use, so the two never drift on rounding.
+    /// `Duration.components` is seconds plus attoseconds (`1e15`
+    /// attoseconds per millisecond).
+    var durationMs: Int {
+        let (seconds, attoseconds) = duration.components
+        return Int(seconds) * 1000 + Int(attoseconds / 1_000_000_000_000_000)
+    }
 }
 
 /// One line retrieved from the log by `getLines`.
@@ -262,6 +272,15 @@ actor ShellState {
     /// All command records in start order.
     func listCommands() -> [CommandRecord] {
         commands
+    }
+
+    /// The record for a single command, or `nil` if `commandID` was never
+    /// started. The single by-id lookup shared by every caller that needs
+    /// one authoritative record — `ExecuteCommand`'s response formatting and
+    /// `ShellRunner`'s posted detached events — rather than each scanning
+    /// `listCommands()` with its own `first { $0.id == … }`.
+    func record(commandID: Int) -> CommandRecord? {
+        commands.first { $0.id == commandID }
     }
 
     // MARK: - History queries

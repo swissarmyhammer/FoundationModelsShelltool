@@ -15,6 +15,21 @@
 // wiring. Per-op requiredness, snake_case/camelCase key normalization, and the
 // flat-union schema all come from the upstream `OperationTool`/
 // `OperationResolver`/`SchemaFusion` machinery.
+//
+// **`EventEmittingTool` / `ForkableTool` discoverability.** Neither `make(...)`
+// function below hand-rolls these conformances — they come entirely from the
+// upstream `OperationTool` machinery: `OperationTool<Context>` conforms to
+// `EventEmittingTool` conditionally, whenever `Context: EventEmittingContext`
+// (see `ShellContext`'s conformance), and to `ForkableTool` unconditionally.
+// Since `ShellContext` conforms to `EventEmittingContext`, the value `make(...)`
+// returns is discoverable as both `any EventEmittingTool` and `any
+// ForkableTool` via a cast from `any Tool` — exactly the cast a session host
+// performs when it maps its `[any Tool]` list through `connecting(_:)`/
+// `forked()` (see `EventEmittingTool`'s and `ForkableTool`'s "hosts connect,
+// users don't" contracts) — proven directly by `ShellEventsTests`, not
+// asserted here. `ShellContext` deliberately does NOT conform to
+// `ForkableContext`: see that file's header for the pinned v1 fork stance
+// (one shared machine, no branched history).
 
 import Foundation
 import FoundationModels

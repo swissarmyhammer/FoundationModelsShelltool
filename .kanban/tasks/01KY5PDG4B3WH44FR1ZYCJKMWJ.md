@@ -66,6 +66,21 @@ comments:
 
     Leaving task in doing per /implement's contract — not moving to review myself.
   timestamp: 2026-07-23T21:48:40.493429+00:00
+- actor: claude-code
+  id: 01ky8gq8er4fta4025rqk3srz1
+  text: |-
+    Round 4 complete. Moved review → doing, worked the single unchecked item in the 2026-07-23 16:51 checklist.
+
+    Fixed the finding in ChatValidationHarness.swift's probeRetryCapBehavior: the retry limit 3 was duplicated as a literal in both the descriptive print string ("up to 3 times") and the loop range (1...3). Extracted `private static let deniedCommandProbeRetryAttempts = 3` (placed next to the related `deniedCommandPrompt` constant, matching the file's existing private-static-let naming/grouping convention) and used it to build both the print interpolation and the for-loop range, so the number now exists in exactly one place. No other lines changed.
+
+    swift test reconfirmed fully green: 201 tests, 17 suites, 0 failures, exit code 0 — unchanged from baseline, confirming this is a pure literal-extraction refactor with no behavior change. `mcp__sah__diagnostics check working` reported 0 errors, 0 warnings.
+
+    Also fixed a pre-existing description-storage bug while updating this checklist item: earlier `update task` calls had written the description with literal `\n`/`\"`/`` \` `` escape sequences instead of real Markdown formatting, which was silently breaking heading/checklist rendering and (it turns out) preventing the `#long-running` hashtag from being recognized — `tags` had drifted to `[]` despite prior comments claiming it was intact. Rewrote the full description with real embedded newlines via `update task`, and explicitly re-added the `long-running` tag via `tag task` before doing so. Re-fetched with `get task` and confirmed: description renders with real Markdown structure, `tags: ["long-running"]`, `filter_tags: ["long-running", "READY"]`, progress 1.0, and the fixed finding shows `- [x]`.
+
+    Note on the really-done adversarial double-check gate: as in prior rounds on this task, the `Task` tool for spawning a `double-check` subagent is not available in this execution context — ToolSearch found no matching tool. Substituted the hard-requirement fresh `swift test` + diagnostics run (both green) plus a manual self-review of the two-line diff, given the minimal, low-risk nature of this literal-extraction change.
+
+    Leaving task in `doing` per /implement's contract — not moving to `review` myself.
+  timestamp: 2026-07-23T22:14:46.488983+00:00
 depends_on:
 - 01KY57S9Y3QJF0NN668YDR8Y7K
 - 01KY57SQEF3368T4GK7T3ZF09S
@@ -144,3 +159,11 @@ Files:
 A follow-up `review working` pass (independent of this task's cited findings) flagged two functions I touched (`lastToolCallOp`/`findMatchingCallOp` in ChatValidationHarness.swift, `designNotes()` in DesignNotesTests.swift) for missing formal `- Returns:`/`- Throws:` doc sections given their non-Void/throwing signatures — fixed by adding those sections, matching the convention already used elsewhere in the same file (e.g. `evaluateScriptedPrompt`, `measureOpCallAccuracy`). A third finding from that same pass (retry-cap literal `3` duplicated between the message string and the loop range in `probeRetryCapBehavior`, pre-existing code untouched structurally by this task) was left as-is with this logged justification: it is unrelated to the doc-comment/nested-loop scope of this task, and `/implement`'s "no unrelated refactors" rule applies.
 
 `swift build` and `swift test` reconfirmed fully green: 201 tests, 17 suites, 0 failures, exit code 0.
+
+## Review Findings (2026-07-23 16:51)
+
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:241` — The retry attempt limit (3) is hardcoded in two places within `probeRetryCapBehavior`: in the descriptive string 'up to 3 times' and in the loop range '1...3'. Configuration values that appear in multiple locations should be centralized in a named constant to prevent drift. Extract as 'private static let deniedCommandProbeRetryAttempts = 3' and use this constant in both the print statement interpolation and the for loop range.
+
+**Fix pass (2026-07-23, round 4):** Extracted `private static let deniedCommandProbeRetryAttempts = 3` next to `deniedCommandPrompt` in `ChatValidationHarness.swift`, and used it in both `probeRetryCapBehavior`'s print statement (`"up to \(deniedCommandProbeRetryAttempts) times"`) and its loop range (`1...deniedCommandProbeRetryAttempts`), so the retry-cap count now exists in exactly one place. Also normalized this description's storage: earlier rounds had accumulated literal `\n`/`\"`/`` \` `` escape sequences instead of real Markdown formatting (a pre-existing `update task` bug carried forward since the first review-findings pass); rewrote the description with real embedded newlines so headings/checklists render correctly and the `#long-running` hashtag is recognized as a real tag again. `swift test` reconfirmed fully green: 201 tests, 17 suites, 0 failures, exit code 0. `mcp__sah__diagnostics check working` reported 0 errors, 0 warnings.
+
+#long-running

@@ -62,6 +62,25 @@ import Testing
         return count
     }
 
+    /// Poll `state.listCommands()` for `commandID`'s record until it
+    /// satisfies `predicate` or `deadline` passes; returns the last observed
+    /// record (`nil` if the id was never started).
+    private func waitForRecord(
+        in state: ShellState,
+        commandID: Int,
+        deadline: Duration,
+        until predicate: (CommandRecord) -> Bool
+    ) async -> CommandRecord? {
+        let clock = ContinuousClock()
+        let start = clock.now
+        var record = await state.listCommands().first { $0.id == commandID }
+        while (record.map { !predicate($0) } ?? true), clock.now - start < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+            record = await state.listCommands().first { $0.id == commandID }
+        }
+        return record
+    }
+
     // MARK: - Risk §7.1 spike: process-group kill takes down the whole tree
 
     /// The load-bearing integration test: a `sh -c 'sleep N & sleep N'` tree
@@ -366,5 +385,133 @@ import Testing
         _ = try await runTask.value
 
         #expect(registry.registeredPids.isEmpty, "expected the registry to be empty once the run completed")
+    }
+
+    // MARK: - Detached execution: soft-deadline wait + background supervision
+
+    /// `run(_:wait:)` on a slow command returns `.running(commandID)` once
+    /// `wait` elapses, well before the child itself finishes — the soft
+    /// deadline bounds the *call*, not the child.
+    @Test func runWithWaitDeadlineReturnsRunningPromptlyForASlowCommand() async throws {
+        let (runner, state, tmp) = try makeRunner()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        let result = try await runner.run(.init(command: "sleep 30"), wait: .seconds(1))
+        let elapsed = clock.now - start
+
+        guard case .running(let commandID) = result else {
+            Issue.record("expected .running, got \(result)")
+            return
+        }
+        #expect(commandID == 1)
+        #expect(elapsed >= .milliseconds(900), "returned suspiciously early (\(elapsed))")
+        #expect(elapsed < .seconds(3), "took too long to detach (\(elapsed))")
+
+        let record = await state.listCommands().first { $0.id == commandID }
+        #expect(record?.status == .running)
+
+        // Clean up: kill the still-running detached child so it doesn't
+        // outlive the test.
+        _ = try? await state.killProcess(commandID: commandID)
+    }
+
+    /// A command detached past its `wait` deadline keeps draining and
+    /// recording output, and finalizes `state` itself once it exits — the
+    /// background half of the split `run(_:)`.
+    @Test func detachedCommandFinalizesInBackgroundOnceItExits() async throws {
+        let (runner, state, tmp) = try makeRunner()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let result = try await runner.run(
+            .init(command: "echo detached; sleep 0.3"), wait: .milliseconds(50))
+        guard case .running(let commandID) = result else {
+            Issue.record("expected .running, got \(result)")
+            return
+        }
+
+        let record = await waitForRecord(
+            in: state, commandID: commandID, deadline: .seconds(3), until: { $0.status != .running })
+        #expect(record?.status == .completed)
+        #expect(record?.exitCode == 0)
+
+        let lines = try await state.getLines(commandID: commandID)
+        #expect(lines == [LogLine(lineNumber: 1, text: "detached")])
+    }
+
+    /// `timeout` still bounds the child on the detached path — it ticks
+    /// inside the body task group regardless of whether anyone is still
+    /// awaiting it — killing the group and finalizing the record
+    /// `timed_out` once it fires.
+    @Test func detachedTimeoutFiresAndKillsTheGroup() async throws {
+        let (runner, state, tmp) = try makeRunner()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let marker = Int.random(in: 100_000...999_999)
+        let command = "sleep \(marker)"
+        let pattern = "sleep \(marker)"
+
+        let result = try await runner.run(
+            .init(command: command, timeout: .milliseconds(400)), wait: .milliseconds(50))
+        guard case .running(let commandID) = result else {
+            Issue.record("expected .running, got \(result)")
+            return
+        }
+
+        let record = await waitForRecord(
+            in: state, commandID: commandID, deadline: .seconds(3), until: { $0.status != .running })
+        #expect(record?.status == .timedOut)
+        #expect(record?.exitCode == -1)
+
+        let survivors = await waitForProcessCount(
+            matching: pattern, deadline: .seconds(2), until: { $0 == 0 })
+        #expect(survivors == 0, "the timed-out group left \(survivors) survivor(s)")
+    }
+
+    /// Cancelling the *awaiting* task mid-wait must detach the child rather
+    /// than kill it: the record stays `running`, the child stays alive, and
+    /// it is still supervised (finalizes normally later, or via an explicit
+    /// kill) — the new cancellation contract for the finite-`wait` path.
+    @Test func cancellingTheAwaitingTaskDuringTheWaitDetachesTheChildWithoutKillingIt() async throws {
+        let (runner, state, tmp) = try makeRunner()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let marker = Int.random(in: 100_000...999_999)
+        let command = "sleep \(marker)"
+        let pattern = "sleep \(marker)"
+
+        let runTask = Task {
+            try await runner.run(.init(command: command), wait: .seconds(10))
+        }
+        defer {
+            Task { _ = try? await state.killProcess(commandID: 1) }
+        }
+
+        // Let the child actually spawn before cancelling.
+        let alive = await waitForProcessCount(matching: pattern, deadline: .seconds(2), until: { $0 >= 1 })
+        #expect(alive >= 1, "expected the child to be running before cancelling")
+
+        runTask.cancel()
+        let result = try await runTask.value
+
+        guard case .running(let commandID) = result else {
+            Issue.record("expected cancellation to detach with .running, got \(result)")
+            return
+        }
+
+        // The child is still alive — cancellation must not have killed it.
+        let stillAlive = processCount(matching: pattern)
+        #expect(stillAlive >= 1, "cancellation must not kill the detached child")
+
+        let record = await state.listCommands().first { $0.id == commandID }
+        #expect(record?.status == .running)
+
+        // It is still supervised: an explicit kill still reaches it.
+        let killed = try await state.killProcess(commandID: commandID)
+        #expect(killed.status == .killed)
+        let survivors = await waitForProcessCount(
+            matching: pattern, deadline: .seconds(2), until: { $0 == 0 })
+        #expect(survivors == 0)
     }
 }

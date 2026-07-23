@@ -213,6 +213,54 @@ import Testing
         _ = try? await running.value
     }
 
+    // MARK: - kill process against a detached command
+
+    /// `execute command` doesn't yet expose a soft-deadline wait publicly
+    /// (a separate downstream task), so this test detaches directly through
+    /// `ShellRunner.run(_:wait:)` — sharing `context.state` with the tool —
+    /// then drives `kill process` through the normal tool dispatch path,
+    /// proving the detached path is killable exactly like an in-flight one:
+    /// the group dies, and the record flips to `killed`.
+    @Test func killProcessKillsADetachedCommand() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shelltool-test-\(UUID().uuidString)", isDirectory: true)
+        let state = try ShellState(preferredDirectory: directory)
+        let policy = ShellPolicy(userConfigURL: nil, projectConfigURL: nil, warn: { _ in })
+        let context = ShellContext(state: state, policy: policy)
+        let tool = try OperationTool(
+            name: "shell",
+            description: "Run shell commands.",
+            context: context,
+            operations: [
+                AnyOperation(ListProcesses.self),
+                AnyOperation(KillProcess.self),
+            ]
+        )
+        let runner = ShellRunner(state: state, registry: ProcessRegistry())
+        let pattern = Self.uniqueSleep()
+        defer { Self.killTree(pattern) }
+
+        let result = try await runner.run(.init(command: pattern), wait: .milliseconds(100))
+        guard case .running(let commandID) = result else {
+            Issue.record("expected the command to still be running, got \(result)")
+            return
+        }
+
+        #expect(try await waitUntil { Self.pgrepCount(pattern) > 0 })
+
+        let (response, _) = try await killPromptly(tool, id: commandID)
+        #expect(response.contains("\"linesCaptured\""), "kill should succeed with a structured result")
+
+        let listed = try await tool.call(
+            arguments: GeneratedContent(properties: ["op": "list processes"]))
+        #expect(listed.contains("\"status\":\"killed\""))
+
+        // The whole process tree is gone.
+        #expect(
+            try await waitUntil(.seconds(5)) { Self.pgrepCount(pattern) == 0 },
+            "the killed detached process tree should be gone")
+    }
+
     // MARK: - JSON-shape snapshots
 
     @Test func listProcessesResultEncodesTheExpectedFieldNamesAsABareArray() throws {

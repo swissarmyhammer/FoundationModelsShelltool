@@ -3,12 +3,28 @@
 // The child is placed in its OWN process group (`platformOptions.processGroupID
 // = 0`, which swift-subprocess maps to `POSIX_SPAWN_SETPGROUP` +
 // `posix_spawnattr_setpgroup(0)` on Darwin), so the child's pid equals its
-// process-group id. Timeout, external kill, and cancellation therefore
+// process-group id. Timeout and an explicit `kill process` therefore
 // `killpg(pid, SIGKILL)` the whole group and take down any grandchildren the
 // command backgrounded (risk plan §7.1). Reaping of the direct child is handled
 // by swift-subprocess's `reapProcess`, which runs on every return path of its
-// `run(...)`; the runner only has to guarantee the group is killed so that
-// `run` can return (via a `defer`'d group-kill and an `onCancel` group-kill).
+// `run(...)`; the body only has to guarantee the group is killed on every one
+// of its own exit paths (normal, timeout, error) so that path can return (a
+// `defer`'d group-kill — see `runBody`).
+//
+// Detached execution — `run(_:wait:)` — splits that guarantee from the call
+// that started it: `runBody` (spawn through §9's teardown and finalizing
+// `state`) runs in its own unstructured `Task`, tracked by `supervisor`, from
+// the moment `run(_:wait:)` is called. `wait == nil` blocks on that task to
+// completion — today's behavior, including today's cancellation contract: an
+// `onCancel` group-kill, because a caller that asked to wait indefinitely and
+// can no longer wait has no other way to stop the child. A finite `wait`
+// instead races the body against the deadline (`raceDeadline`) and, new here,
+// treats *cancellation* of that wait exactly like the deadline elapsing:
+// detach rather than kill. In that case the child keeps running, supervised
+// in the background, and finalizes `state` itself once it exits — the
+// no-leak guarantee for it is then carried by stream EOF (§9 above), an
+// explicit `kill process`, `timeout`, and `ProcessRegistry`'s exit sweep, not
+// by this call's own cancellation.
 //
 // Output recording is incremental, not batch-at-exit: the two stream readers
 // (stdout, stderr) each funnel their raw chunks into one shared `AsyncStream`,
@@ -55,6 +71,13 @@ struct ShellRunner {
     /// comment for why).
     var registry: ProcessRegistry = .global
 
+    /// Tracks the background `Task` for a command whose body has outlived (or
+    /// is racing) the `run(_:wait:)` call that started it — see
+    /// `RunSupervisor`. Each `ShellRunner` gets its own by default; nothing
+    /// about supervision needs `ProcessRegistry.global`'s process-wide
+    /// sharing.
+    var supervisor: RunSupervisor = RunSupervisor()
+
     /// One command execution request.
     struct Request: Sendable {
         /// The command string passed to `sh -c`.
@@ -99,6 +122,30 @@ struct ShellRunner {
         var exitCode: Int
     }
 
+    /// The result of `run(_:wait:)`: the child finished within `wait`, or it
+    /// didn't and is now running detached in the background.
+    enum RunResult: Sendable {
+        /// The child exited within `wait` (or `wait` was `nil`); carries its
+        /// outcome.
+        case finished(Outcome)
+        /// `wait` elapsed — or the call was cancelled — before the child
+        /// exited; carries its command id. The child keeps running,
+        /// supervised, and finalizes `state` itself once it exits.
+        case running(Int)
+    }
+
+    /// Thrown by `run(_:wait:)` when the detached body settles with an error
+    /// before `wait` elapses (e.g. a spawn failure). Carries the underlying
+    /// failure's description rather than the original `Error`, for the same
+    /// `Sendable` reason as `ShellStateError.invalidRegex` — see that case's
+    /// doc comment.
+    struct BodyFailure: Error, CustomStringConvertible, Sendable {
+        /// The underlying failure's description, captured at throw time.
+        let underlyingMessage: String
+
+        var description: String { "Command failed before completing: \(underlyingMessage)" }
+    }
+
     /// Which concurrent child task in `run`'s task group just completed: a
     /// stream reader reaching EOF, the incremental-flush consumer draining and
     /// sealing the buffer, or the optional timeout timer elapsing.
@@ -119,16 +166,118 @@ struct ShellRunner {
         let bytes: [UInt8]
     }
 
-    /// Run `request` to completion, returning its outcome.
+    /// Run `request` to completion, returning its outcome — `run(_:wait:)`
+    /// with `wait: nil` unwrapped, for callers that only need today's
+    /// block-to-completion behavior (every caller before detached execution
+    /// existed).
+    func run(_ request: Request) async throws -> Outcome {
+        guard case .finished(let outcome) = try await run(request, wait: nil) else {
+            preconditionFailure("run(_:wait: nil) always waits to completion and must finish")
+        }
+        return outcome
+    }
+
+    /// Run `request`, returning once either the child finishes or `wait`
+    /// elapses — whichever comes first (see the file header for the overall
+    /// detached-execution design).
+    ///
+    /// The child's entire supervision — spawn, stream draining, §9's
+    /// teardown, and finalizing `state` — runs in its own unstructured `Task`
+    /// (`runBody`, tracked by `supervisor`) from the moment this call starts,
+    /// independent of whatever this call itself goes on to do.
+    ///
+    /// `wait == nil` simply blocks on that task to completion — today's
+    /// behavior, including today's cancellation contract: cancelling *this*
+    /// call while `wait` is `nil` still kills the child's group immediately
+    /// (`onCancel` below), because a caller asking to wait indefinitely for a
+    /// command it can no longer wait for has no other way to stop it.
+    ///
+    /// A finite `wait`, by contrast, races the child's completion against the
+    /// deadline (`raceDeadline`) and — new to this call — treats
+    /// *cancellation* of this wait exactly like the deadline elapsing: it
+    /// detaches rather than killing. The child keeps running, supervised in
+    /// the background by `supervisor`, and finalizes `state` itself when it
+    /// eventually exits.
+    ///
+    /// - Parameters:
+    ///   - request: the command to run.
+    ///   - wait: how long to wait for the child before detaching and
+    ///     returning `.running`; `nil` waits to completion.
+    /// - Returns: `.finished(Outcome)` if the child exited within `wait` (or
+    ///   `wait` is `nil`); `.running(commandID)` if `wait` elapsed — or this
+    ///   call was cancelled — first.
+    /// - Throws: `BodyFailure` (or whatever `Subprocess.run` or the output
+    ///   pipeline itself throws, when `wait` is `nil`) if the child's body
+    ///   fails before `wait` elapses.
     ///
     /// The command-length (≤ 256 KiB) and env-value (≤ 1024 chars) limits are
     /// **not** re-checked here: they are `ShellPolicy`'s responsibility
     /// (`check(command:)` / `check(environment:)`), which the caller runs before
     /// `run`. The runner accepts pre-validated input and does not duplicate those
     /// limits — the only cap it owns is the captured-output size (`maxOutputSize`).
-    func run(_ request: Request) async throws -> Outcome {
+    func run(_ request: Request, wait: Duration?) async throws -> RunResult {
         let commandID = await state.startCommand(request.command)
+        let pidBox = Mutex<pid_t>(0)
+        let st = state
+        let maxSize = maxOutputSize
+        let reg = registry
+        let sup = supervisor
 
+        let bodyTask = Task<Outcome, Error> {
+            try await Self.runBody(
+                request: request, commandID: commandID, pidBox: pidBox,
+                state: st, maxSize: maxSize, registry: reg)
+        }
+        // Tracked from the moment the body starts, regardless of `wait` —
+        // the self-removing wrapper task is the supervisor's only cleanup:
+        // once `bodyTask` settles (normally, timed out, or killed), this
+        // task ends and untracks itself.
+        let supervisorTask = Task<Void, Never> {
+            _ = try? await bodyTask.value
+            sup.untrack(commandID)
+        }
+        sup.track(commandID: commandID, task: supervisorTask)
+
+        guard let wait else {
+            let outcome = try await withTaskCancellationHandler {
+                try await bodyTask.value
+            } onCancel: {
+                // External cancellation of an unbounded wait: kill the group
+                // immediately so the child's pipes close, the library
+                // unblocks the body, and this call returns to reap the
+                // child — today's pre-detach contract (see the file header).
+                let pid = pidBox.withLock { $0 }
+                if pid != 0 { _ = killpg(pid, SIGKILL) }
+            }
+            return .finished(outcome)
+        }
+
+        switch await Self.raceDeadline(bodyTask: bodyTask, wait: wait) {
+        case .finished(let outcome):
+            return .finished(outcome)
+        case .bodyFailed(let message):
+            throw BodyFailure(underlyingMessage: message)
+        case .deadline:
+            return .running(commandID)
+        }
+    }
+
+    /// Spawn and fully supervise one child for `request`, from process launch
+    /// through §9's guaranteed group-kill teardown to
+    /// `state.completeIfRunning` — the entire body a `run(_:wait:)` call
+    /// detaches into its own unstructured `Task` (see the file header).
+    /// Records the spawned pid into `pidBox` the moment it's known, so a
+    /// `wait: nil` caller can still kill the group on its own cancellation
+    /// (see that call site) — this function itself carries no cancellation
+    /// handling of its own.
+    private static func runBody(
+        request: Request,
+        commandID: Int,
+        pidBox: borrowing Mutex<pid_t>,
+        state: ShellState,
+        maxSize: Int,
+        registry: ProcessRegistry
+    ) async throws -> Outcome {
         let config = Configuration(
             executable: .path(FilePath("/bin/sh")),
             arguments: ["-c", request.command],
@@ -136,49 +285,38 @@ struct ShellRunner {
             workingDirectory: request.workingDirectory.map { FilePath($0) },
             platformOptions: Self.ownProcessGroupOptions()
         )
-
-        let pidBox = Mutex<pid_t>(0)
         let timeout = request.timeout
-        let st = state
-        let maxSize = maxOutputSize
-        let reg = registry
 
-        let result = try await withTaskCancellationHandler {
-            try await Subprocess.run(
-                config, input: .none, output: .sequence, error: .sequence
-            ) { execution in
-                let pid = execution.processIdentifier.value
-                pidBox.withLock { $0 = pid }
-                await st.registerProcess(commandID: commandID, pid: pid)
-                reg.register(pid)
-                // Guaranteed teardown on EVERY body exit path (normal, timeout,
-                // error): group-kill so any backgrounded grandchildren die and
-                // the library's reap can complete. Killing an already-dead group
-                // is a harmless ESRCH. Also deregister from the process-group
-                // registry — the run's own teardown just did the real work
-                // `sweep(_:)` exists to backstop, so there is nothing left here
-                // for a subsequent sweep to (harmlessly) re-kill.
-                defer {
-                    _ = killpg(pid, SIGKILL)
-                    reg.deregister(pid)
-                }
-
-                return try await Self.waitForCompletion(
-                    stdout: execution.standardOutput,
-                    stderr: execution.standardError,
-                    state: st,
-                    commandID: commandID,
-                    maxSize: maxSize,
-                    timeout: timeout,
-                    pid: pid
-                )
+        let result = try await Subprocess.run(
+            config, input: .none, output: .sequence, error: .sequence
+        ) { execution in
+            let pid = execution.processIdentifier.value
+            pidBox.withLock { $0 = pid }
+            await state.registerProcess(commandID: commandID, pid: pid)
+            registry.register(pid)
+            // Guaranteed teardown on EVERY body exit path (normal, timeout,
+            // error): group-kill so any backgrounded grandchildren die and
+            // the library's reap can complete — this guarantee holds whether
+            // this body is awaited directly (`wait: nil`) or running
+            // detached in the background. Killing an already-dead group is a
+            // harmless ESRCH. Also deregister from the process-group
+            // registry — this teardown just did the real work `sweep(_:)`
+            // exists to backstop, so there is nothing left here for a
+            // subsequent sweep to (harmlessly) re-kill.
+            defer {
+                _ = killpg(pid, SIGKILL)
+                registry.deregister(pid)
             }
-        } onCancel: {
-            // External cancellation: kill the group immediately so the child's
-            // pipes close, the library unblocks the body, and `run` returns to
-            // reap the child.
-            let pid = pidBox.withLock { $0 }
-            if pid != 0 { _ = killpg(pid, SIGKILL) }
+
+            return try await Self.waitForCompletion(
+                stdout: execution.standardOutput,
+                stderr: execution.standardError,
+                state: state,
+                commandID: commandID,
+                maxSize: maxSize,
+                timeout: timeout,
+                pid: pid
+            )
         }
 
         let (status, exitCode) = Self.finalizeResult(
@@ -187,9 +325,67 @@ struct ShellRunner {
         // Atomic transition: only finalize if still running, so a concurrent
         // `kill process` op that already marked the record `.killed` is not
         // clobbered (the check and write happen in one `ShellState` hop).
+        // Runs here, in the body, regardless of whether anyone is still
+        // awaiting it — the detached path's own background finalize.
         await state.completeIfRunning(commandID: commandID, status: status, exitCode: exitCode)
 
         return Outcome(commandID: commandID, status: status, exitCode: exitCode)
+    }
+
+    /// The event produced first by `raceDeadline`: the body settling —
+    /// successfully or with an error — or the deadline (equally, an ambient
+    /// cancellation of the `run(_:wait:)` caller — see the file header)
+    /// winning first. Body errors are carried as a message rather than the
+    /// thrown `Error` itself, for the same `Sendable` reason as
+    /// `BodyFailure`.
+    private enum RaceEvent: Sendable {
+        case finished(Outcome)
+        case bodyFailed(String)
+        case deadline
+    }
+
+    /// Race a detached command's `bodyTask` against `wait` elapsing,
+    /// returning as soon as either settles — without ever waiting on the
+    /// loser.
+    ///
+    /// Both racers below are plain unstructured `Task`s, not task-group
+    /// children: a task group's scope can't exit while a child is still
+    /// suspended, which would force this call to block on `bodyTask` even
+    /// after the deadline won — exactly the leak this function exists to
+    /// avoid. Feeding both racers' results into a single `AsyncStream` and
+    /// taking only its first value lets the loser (most often the "await
+    /// `bodyTask`" side) keep running completely detached from this call
+    /// once it returns.
+    ///
+    /// Ambient cancellation of the calling task — the "cancelling the
+    /// awaiting tool-call task" case in the file header — is folded into the
+    /// same race: the `withTaskCancellationHandler` below feeds a
+    /// `.deadline` event on cancellation, so cancelling this call behaves
+    /// exactly like the deadline winning, and never touches `bodyTask` or
+    /// the child process it supervises.
+    private static func raceDeadline(
+        bodyTask: Task<Outcome, Error>, wait: Duration
+    ) async -> RaceEvent {
+        let (stream, continuation) = AsyncStream<RaceEvent>.makeStream()
+
+        Task {
+            do {
+                continuation.yield(.finished(try await bodyTask.value))
+            } catch {
+                continuation.yield(.bodyFailed(String(describing: error)))
+            }
+        }
+        Task {
+            _ = try? await Task.sleep(for: wait)
+            continuation.yield(.deadline)
+        }
+
+        return await withTaskCancellationHandler {
+            var iterator = stream.makeAsyncIterator()
+            return await iterator.next() ?? .deadline
+        } onCancel: {
+            continuation.yield(.deadline)
+        }
     }
 
     /// Number of output streams a child produces (stdout + stderr) — the

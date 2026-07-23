@@ -166,4 +166,41 @@ import Testing
 
         #expect(required == ["op"])
     }
+
+    // MARK: - waitSeconds schema (get lines long-poll)
+
+    /// The new `waitSeconds` parameter is fused into the flat schema like any
+    /// other optional field: present as an `integer` property, absent from
+    /// `required` (every field but `op` is optional in the fused schema).
+    @Test func getLinesWaitSecondsAppearsInTheFusedSchemaAsAnOptionalInteger() throws {
+        let tool = try makeTool()
+        let object = try fusedSchemaObject(tool)
+        let properties = try #require(object["properties"] as? [String: Any])
+        let waitSecondsSchema = try #require(properties["waitSeconds"] as? [String: Any])
+        let required = try #require(object["required"] as? [String])
+
+        #expect(waitSecondsSchema["type"] as? String == "integer")
+        #expect(!required.contains("waitSeconds"))
+    }
+
+    @Test func getLinesWaitSecondsDispatchesThroughTheFusedToolAndReturnsAvailableLinesImmediately()
+        async throws
+    {
+        let tool = try makeTool()
+        _ = try await tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "execute command", "command": "printf 'alpha\\n'",
+            ]))
+
+        // Lines are already stored, so `waitSeconds` never engages the poll
+        // loop — dispatching through the fused tool still resolves promptly.
+        let response = try await tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "get lines", "command_id": 1, "waitSeconds": 5,
+            ]))
+
+        #expect(response.contains("\"commandId\":1"))
+        #expect(response.contains("1: alpha"))
+        #expect(response.contains("\"status\":\"completed\""))
+    }
 }

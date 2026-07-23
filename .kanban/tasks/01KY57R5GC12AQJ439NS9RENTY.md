@@ -84,8 +84,8 @@ comments:
 
     All Review Findings checklist items across all four dated sections are now [x]; task progress is 1.0. Leaving in `doing` per the implement workflow — ready for /review.
   timestamp: 2026-07-23T15:51:45.484584+00:00
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: 8f80
 title: 'Incremental output recording: stream lines into ShellState while a command runs'
 ---
 ## What

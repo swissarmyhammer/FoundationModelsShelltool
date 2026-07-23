@@ -170,6 +170,31 @@ import Testing
         #expect(cliResult.output.contains("2: beta"))
     }
 
+    // MARK: - get lines: waitSeconds exposed with no short flag
+
+    /// `waitSeconds` has no `@OperationParam(short:)`, so its only CLI form is
+    /// the long `--wait-seconds` option (ArgumentParser's default kebab-case
+    /// derivation from the property name) — pinned so `get lines` and the
+    /// future `execute command` `waitSeconds` cannot diverge. The requested
+    /// lines are already stored, so passing it never engages the poll loop.
+    @Test func getLinesWaitSecondsCLIFlagConvergesWithTheModelPathAndReturnsPromptly() async throws {
+        let cli = try makeHarness()
+        let model = try makeHarness()
+        try await seed(cli, model, command: "printf 'alpha\\nbeta\\n'")
+
+        let cliResult = await (try cli.driver()).run(
+            arguments: ["lines", "get", "--command-id", "1", "--wait-seconds", "5"])
+        let modelJSON = try await model.tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "get lines", "command_id": 1, "waitSeconds": 5,
+            ]))
+
+        #expect(cliResult.exitCode == 0)
+        #expect(cliResult.output == modelJSON)
+        #expect(cliResult.output.contains("1: alpha"))
+        #expect(cliResult.output.contains("2: beta"))
+    }
+
     // MARK: - kill process
 
     @Test func killProcessConvergesAcrossCLIAndModelPaths() async throws {

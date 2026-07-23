@@ -347,21 +347,207 @@ import Testing
         encoder.outputFormatting = [.sortedKeys]
 
         let result = LineRange(
-            commandID: 3, first: 2, last: 4, lines: ["2: beta", "3: gamma", "4: delta"])
+            commandID: 3, first: 2, last: 4, lines: ["2: beta", "3: gamma", "4: delta"],
+            status: "running")
         let json = try #require(String(data: try encoder.encode(result), encoding: .utf8))
 
         #expect(json.contains("\"commandId\":3"))
         #expect(json.contains("\"first\":2"))
         #expect(json.contains("\"last\":4"))
         #expect(json.contains("\"lines\":[\"2: beta\",\"3: gamma\",\"4: delta\"]"))
+        #expect(json.contains("\"status\":\"running\""))
         #expect(!json.contains("\"commandID\""))
 
-        // An empty range: no lines, both bounds zero (the unknown-id shape).
-        let empty = LineRange(commandID: 5, first: 0, last: 0, lines: [])
+        // An empty range with an unknown status: no lines, both bounds zero
+        // (the unknown-id shape), `status` omitted rather than encoded `null`
+        // — the same synthesized-optional-encoding technique as
+        // `ProcessRow.exitCode`.
+        let empty = LineRange(commandID: 5, first: 0, last: 0, lines: [], status: nil)
         let emptyJSON = try #require(String(data: try encoder.encode(empty), encoding: .utf8))
         #expect(emptyJSON.contains("\"commandId\":5"))
         #expect(emptyJSON.contains("\"first\":0"))
         #expect(emptyJSON.contains("\"last\":0"))
         #expect(emptyJSON.contains("\"lines\":[]"))
+        #expect(!emptyJSON.contains("\"status\""))
+    }
+
+    // MARK: - get lines: waitSeconds — negative value is corrective
+
+    /// Drives `GetLines.execute(in:)` directly, mirroring
+    /// `grepHistoryExecuteReturnsCorrectiveGrepOutputForInvalidRegex`: a
+    /// negative `waitSeconds` must come back as the pinned corrective
+    /// `GetLinesOutput`, not a thrown error and not a `.found` result.
+    @Test func getLinesExecuteReturnsCorrectiveOutputForNegativeWaitSeconds() async throws {
+        let context = try makeContext()
+        let operation = try GetLines(
+            GeneratedContent(properties: ["commandID": 1, "waitSeconds": -1]))
+
+        let output = try await operation.execute(in: context)
+
+        guard case .corrective(let message) = output else {
+            Issue.record("expected a .corrective GetLinesOutput, got \(output)")
+            return
+        }
+        #expect(message == "waitSeconds must be non-negative")
+    }
+
+    @Test func getLinesWithNegativeWaitSecondsReturnsTheCorrectiveMessageThroughTheFusedTool() async throws {
+        let tool = try makeTool()
+
+        let response = try await tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "get lines", "command_id": 1, "wait_seconds": -1,
+            ]))
+
+        #expect(response.contains("waitSeconds must be non-negative"))
+        // A corrective message, not a structured range.
+        #expect(!response.contains("\"commandId\""))
+    }
+
+    // MARK: - get lines: waitSeconds — lines already available return immediately
+
+    @Test func getLinesReturnsImmediatelyWhenRequestedLinesAreAlreadyAvailableEvenWithWaitSecondsSet()
+        async throws
+    {
+        let context = try makeContext()
+        _ = try await ShellRunner(state: context.state).run(
+            .init(command: "printf 'alpha\\nbeta\\n'"))
+
+        let operation = try GetLines(
+            GeneratedContent(properties: ["commandID": 1, "waitSeconds": 5]))
+        let clock = ContinuousClock()
+        let start = clock.now
+        let output = try await operation.execute(in: context)
+        let elapsed = clock.now - start
+
+        guard case .found(let range) = output else {
+            Issue.record("expected .found, got \(output)")
+            return
+        }
+        #expect(range.lines == ["1: alpha", "2: beta"])
+        #expect(range.status == "completed")
+        // No polling needed — this never touched the 5s deadline.
+        #expect(elapsed < .seconds(1))
+    }
+
+    // MARK: - get lines: waitSeconds — long-poll behavior against a real running child
+
+    /// Polls `context.state.listCommands()` (never through the op under test)
+    /// until the background command is registered, so the assertions below
+    /// race the real subprocess timing, not Swift's task-scheduling gap.
+    private func waitUntilACommandIsRegistered(in context: ShellContext) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while await context.state.listCommands().isEmpty, clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    @Test func getLinesLongPollReturnsAsSoonAsARunningCommandEmitsARequestedLine() async throws {
+        let context = try makeContext()
+        let running = Task {
+            try await ShellRunner(state: context.state).run(
+                .init(command: "sh -c 'sleep 0.5; echo late'"))
+        }
+        defer { running.cancel() }
+        try await waitUntilACommandIsRegistered(in: context)
+
+        let operation = try GetLines(
+            GeneratedContent(properties: ["commandID": 1, "waitSeconds": 5]))
+        let clock = ContinuousClock()
+        let start = clock.now
+        let output = try await operation.execute(in: context)
+        let elapsed = clock.now - start
+
+        guard case .found(let range) = output else {
+            Issue.record("expected .found, got \(output)")
+            return
+        }
+        #expect(range.lines.contains("1: late"))
+        // The line landed well before the 5s deadline — the poll loop woke on
+        // the new line, not the deadline.
+        #expect(elapsed < .seconds(3))
+
+        running.cancel()
+        _ = try? await running.value
+    }
+
+    @Test func getLinesDeadlineElapsesWithNoNewLinesReturnsEmptyLinesAndRunningStatus() async throws {
+        let context = try makeContext()
+        let running = Task {
+            try await ShellRunner(state: context.state).run(.init(command: "sleep 5"))
+        }
+        defer { running.cancel() }
+        try await waitUntilACommandIsRegistered(in: context)
+
+        let operation = try GetLines(
+            GeneratedContent(properties: ["commandID": 1, "waitSeconds": 1]))
+        let clock = ContinuousClock()
+        let start = clock.now
+        let output = try await operation.execute(in: context)
+        let elapsed = clock.now - start
+
+        guard case .found(let range) = output else {
+            Issue.record("expected .found, got \(output)")
+            return
+        }
+        #expect(range.lines.isEmpty)
+        #expect(range.status == "running")
+        // Waited roughly the full 1s deadline rather than bailing instantly.
+        #expect(elapsed >= .milliseconds(900))
+
+        running.cancel()
+        _ = try? await running.value
+    }
+
+    @Test func getLinesReturnsPromptlyOnceARunningCommandFinishesWithNoLinesInRange() async throws {
+        let context = try makeContext()
+        let running = Task {
+            try await ShellRunner(state: context.state).run(.init(command: "sleep 0.3"))
+        }
+        defer { running.cancel() }
+        try await waitUntilACommandIsRegistered(in: context)
+
+        let operation = try GetLines(
+            GeneratedContent(properties: ["commandID": 1, "waitSeconds": 5]))
+        let clock = ContinuousClock()
+        let start = clock.now
+        let output = try await operation.execute(in: context)
+        let elapsed = clock.now - start
+
+        guard case .found(let range) = output else {
+            Issue.record("expected .found, got \(output)")
+            return
+        }
+        #expect(range.lines.isEmpty)
+        #expect(range.status == "completed")
+        // The command finishing ended the poll well before the 5s deadline.
+        #expect(elapsed < .seconds(3))
+
+        _ = try? await running.value
+    }
+
+    // MARK: - get lines: status field on a finished / unknown command
+
+    @Test func getLinesOnAFinishedCommandReportsItsFinalStatusInJSON() async throws {
+        let tool = try makeTool()
+        _ = try await tool.call(
+            arguments: GeneratedContent(properties: [
+                "op": "execute command", "command": "printf 'alpha\\n'",
+            ]))
+
+        let response = try await tool.call(
+            arguments: GeneratedContent(properties: ["op": "get lines", "command_id": 1]))
+
+        #expect(response.contains("\"status\":\"completed\""))
+    }
+
+    @Test func getLinesOnAnUnknownCommandIdOmitsTheStatusKeyFromJSON() async throws {
+        let tool = try makeTool()
+
+        let response = try await tool.call(
+            arguments: GeneratedContent(properties: ["op": "get lines", "command_id": 999]))
+
+        #expect(!response.contains("\"status\""))
     }
 }

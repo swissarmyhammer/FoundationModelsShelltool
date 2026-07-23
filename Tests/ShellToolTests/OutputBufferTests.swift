@@ -73,6 +73,18 @@ import Testing
         #expect(buffer.stdoutLines == ["[Binary content: 7 bytes]"])
     }
 
+    @Test func liveBinaryPlaceholderMatchesCumulativeStoredByteCountAcrossStreams() {
+        var buffer = OutputBuffer(maxSize: 1000)
+        _ = buffer.appendStdout([0x00] + bytes("abc\n"))  // 5 bytes; null triggers binary
+        _ = buffer.appendStderr(bytes("more\n"))  // 5 more bytes, still stored (cumulative)
+
+        // The live `stdout`/`stderr` properties must report the same cumulative
+        // byte count as `finish()` does for the same event — not each stream's
+        // own resident `data.count`.
+        #expect(buffer.stdout == "[Binary content: 10 bytes]")
+        #expect(buffer.stderr == "[Binary content: 10 bytes]")
+    }
+
     @Test func plainTextIsNotFlaggedBinary() {
         var buffer = OutputBuffer(maxSize: 1000)
         _ = buffer.appendStdout(bytes("normal\ttext with tabs\r\nand crlf\n"))

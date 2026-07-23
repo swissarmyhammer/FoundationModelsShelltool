@@ -53,6 +53,15 @@ struct OutputBuffer {
     /// The `\n` byte the shell log is split, truncated, and trimmed on.
     static let newlineByte = UInt8(ascii: "\n")
 
+    /// The placeholder line rendered in place of a binary stream's raw bytes,
+    /// mirroring `truncationMarker`'s role as the one home for its literal
+    /// text. `byteCount` should always be the cumulative `storedByteCount`, so
+    /// the same event reports the same count whether read live (`stdout`/
+    /// `stderr`) or at `finish()`.
+    static func binaryPlaceholder(byteCount: Int) -> String {
+        "[Binary content: \(byteCount) bytes]"
+    }
+
     /// Maximum total stored size in bytes, shared across stdout and stderr.
     let maxSize: Int
 
@@ -100,10 +109,14 @@ struct OutputBuffer {
     }
 
     /// The formatted stdout: the binary placeholder if binary, else lossy UTF-8.
-    var stdout: String { Self.format(stdoutData, binaryDetected: binaryDetected) }
+    var stdout: String {
+        Self.format(stdoutData, binaryDetected: binaryDetected, storedByteCount: storedByteCount)
+    }
 
     /// The formatted stderr: the binary placeholder if binary, else lossy UTF-8.
-    var stderr: String { Self.format(stderrData, binaryDetected: binaryDetected) }
+    var stderr: String {
+        Self.format(stderrData, binaryDetected: binaryDetected, storedByteCount: storedByteCount)
+    }
 
     /// The stdout split into log lines the way `ShellState` reads them back.
     var stdoutLines: [String] { logLines(from: stdoutData) }
@@ -213,7 +226,7 @@ struct OutputBuffer {
         if binaryDetected {
             stdoutData = []
             stderrData = []
-            return FinalLines(stdout: ["[Binary content: \(storedByteCount) bytes]"])
+            return FinalLines(stdout: [Self.binaryPlaceholder(byteCount: storedByteCount)])
         }
 
         var result = FinalLines()
@@ -269,11 +282,13 @@ struct OutputBuffer {
         return false
     }
 
-    /// Format stored bytes: the binary placeholder (with the stored byte count)
-    /// if binary, otherwise a lossy-UTF-8 decode of the raw bytes.
-    private static func format(_ data: [UInt8], binaryDetected: Bool) -> String {
+    /// Format stored bytes: the binary placeholder (sized by the cumulative
+    /// `storedByteCount`, not this stream's own resident `data.count` — see
+    /// `binaryPlaceholder(byteCount:)`) if binary, otherwise a lossy-UTF-8
+    /// decode of the raw bytes.
+    private static func format(_ data: [UInt8], binaryDetected: Bool, storedByteCount: Int) -> String {
         if binaryDetected || isBinary(data) {
-            return "[Binary content: \(data.count) bytes]"
+            return binaryPlaceholder(byteCount: storedByteCount)
         }
         return String(decoding: data, as: UTF8.self)
     }
@@ -288,7 +303,7 @@ struct OutputBuffer {
         // in for with a placeholder.
         guard !data.isEmpty else { return [] }
         if binaryDetected || Self.isBinary(data) {
-            return [Self.format(data, binaryDetected: binaryDetected)]
+            return [Self.format(data, binaryDetected: binaryDetected, storedByteCount: storedByteCount)]
         }
         return Self.splitLogLines(data)
     }

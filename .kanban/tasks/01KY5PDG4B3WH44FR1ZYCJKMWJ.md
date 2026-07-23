@@ -27,6 +27,28 @@ comments:
 
     Leaving task in `doing` per /implement's contract — not moving to `review` myself.
   timestamp: 2026-07-23T19:04:35.054235+00:00
+- actor: claude-code
+  id: 01ky89p3abx9trt3wy8ka99aha
+  text: |-
+    Picked up from review with a fresh "Review Findings (2026-07-23 14:08)" checklist of 11 doc-comment findings (all same category: `///` first line must be a complete, period-terminated sentence). Moved review → doing per /implement.
+
+    Fixed all 11 cited findings by rewriting each flagged doc comment's first line into a complete sentence ending in a period (10 in ChatValidationHarness.swift, 1 in DesignNotesTests.swift), generally by splitting a long run-on first line into a short complete-sentence summary plus a second paragraph carrying the remaining detail — matches the file's existing multi-paragraph doc-comment style.
+
+    Root-cause sweep (per the task instructions, not just the 11 cited lines) found 3 additional undetected occurrences of the same defect in ChatValidationHarness.swift and fixed them too:
+    - `deniedCommandPrompt`'s doc comment ended with "and"
+    - `availabilityReasonMessages`'s doc comment's first line cut off mid type-reference with no punctuation
+    - `evaluateScriptedPrompt`'s doc comment ended with "tool"
+
+    Also caught and corrected one self-introduced regression mid-pass: an early edit to `deniedCommandPrompt`'s doc appended a second paragraph but left the original incomplete first line untouched — re-edited to actually complete the first-line sentence before moving on.
+
+    Verified line-by-line by reading the full file after all edits: every `///` doc comment in both files now has a first line that is a complete, period-terminated sentence.
+
+    `swift test` reconfirmed fully green: 201 tests, 17 suites, 0 failures (matches baseline). Also ran `swift test --filter DesignNotesTests` in isolation to confirm the 8 pinned phrase cases still pass.
+
+    Updated all 11 Review Findings checklist items to `- [x]` via `update task` with real embedded newlines (not literal `\n`), and re-fetched to confirm the description renders correctly and `tags`/`filter_tags` still include `long-running`. Progress now 1.0.
+
+    Leaving task in `doing` per /implement's contract — not moving to `review` myself.
+  timestamp: 2026-07-23T20:11:48.427640+00:00
 depends_on:
 - 01KY57S9Y3QJF0NN668YDR8Y7K
 - 01KY57SQEF3368T4GK7T3ZF09S
@@ -61,3 +83,21 @@ Files:
 
 ## Workflow
 - Use `/tdd` — update the doc-pinning tests first, then the docs to satisfy them. #long-running
+
+## Review Findings (2026-07-23 14:08)
+
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:18` — The first line of a doc comment must be a single-sentence summary ending in a period. This first line ends with 'in' and leaves the sentence incomplete, forcing the reader to continue to the next line. Rewrite to complete the summary on the first line: `/// A scripted prompt paired with the op the shell tool should dispatch.`.
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:29` — The first line of a doc comment must end in a period. This summary spans multiple lines because the first line ends abruptly with 'a long'. Rephrase to fit a complete thought on the first line: `/// The scripted prompt set in execution order, covering long commands, truncation follow-ups, corrective kills, and soft-deadline detach flows.`.
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:62` — The first line of a doc comment must end in a period. This line ends with 'in', leaving the thought incomplete. Complete the first line: `/// The fallback text used for unavailability reasons not in availabilityReasonMessages.`.
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:65` — The first line of a doc comment must end in a period. This line ends with 'no', leaving the summary incomplete. Complete the sentence: `/// The placeholder string shown when a response produced no tool call.`.
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:75` — The first line of a doc comment must end in a period. This line ends with 'on', leaving the summary incomplete. Complete the first line: `/// Runs the live-model validation if SystemLanguageModel is available on this device; otherwise prints a skip message.`.
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:96` — The first line of a doc comment must end in a period. This line ends with 'is', leaving the summary incomplete. Complete the first line: `/// The shared suffix of the skip messages that run() prints when the model is unavailable, so phrasing lives in one place.`.
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:100` — The first line of a doc comment must end in a period. This line ends with 'plan's', leaving the summary incomplete. Complete the summary: `/// Prints the fused tool's rendered schema token count so the schema-in-prompt cost is observable.`.
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:118` — The first line of a doc comment must end in a period. This line ends with 'many', leaving the summary incomplete. Complete the first line: `/// Sends every scripted prompt to the session and tallies how many dispatched their expected operations.`.
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:149` — The first line of a doc comment must end in a period. This line ends with 'row,' (a comma), leaving the summary incomplete. Complete the first line: `/// Sends a policy-denied command up to three times to observe corrective recovery and retry-cap behavior.`.
+- [x] `Examples/ShellDemo/Sources/shell-demo/ChatValidationHarness.swift:165` — The first line of a doc comment must end in a period. This line ends with 'in', leaving the summary incomplete. Complete the first line: `/// The op argument of the most recent tool call matching the given tool name, or nil if none.`.
+- [x] `Tests/ShellToolTests/DesignNotesTests.swift:12` — The first line of a doc comment must end in a period. This line ends without punctuation. Rewrite as a complete first sentence: `/// Verifies that the eight "departures discovered during implementation" entries (8–15) are present in DESIGN_NOTES.md.`.
+
+**Doc-claim verification (manual, per acceptance criterion):** Cross-checked README.md/DESIGN_NOTES.md prose against Sources/ShellTool/ — `defaultWaitSeconds = 30` matches the "default 30" / "defaults to 30s" claims; `ExecuteResult.exitCode: Int?` is `nil` in `runningResult(commandID:in:)`, matching the "omitted, not null" claim; the README worked-example `outputNote` string matches `ExecuteCommand.runningOutputNote` verbatim; `GetLines`'s long-poll re-check loop matches the README's cadence description; `ProcessRegistry`'s `atexit` sweep doc comment independently states the same "normal exit only, not SIGKILL/crash" limitation DESIGN_NOTES §15 claims. No contradictions found.
+
+**Fix pass (2026-07-23):** All 11 findings fixed by rewording each flagged `///` doc comment's first line into a complete sentence ending in a period (content preserved; wording adjusted, often by splitting into a short first-line summary plus a second paragraph for the remaining detail). Root-cause sweep of both files for the same defect beyond the 11 cited lines found and fixed 3 additional occurrences: `deniedCommandPrompt`'s doc comment (ended with "and"), `availabilityReasonMessages`'s doc comment (first line cut off mid-clause with no punctuation), and `evaluateScriptedPrompt`'s doc comment (ended with "tool"); plus `requiredPhrases`' doc comment in DesignNotesTests.swift (ended with "appear", no period). `swift test` reconfirmed fully green: 201 tests, 17 suites, 0 failures.

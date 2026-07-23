@@ -2,9 +2,10 @@ import Foundation
 import Testing
 
 /// Verifies that the eight "departures discovered during implementation"
-/// entries (8–15) in the repo root's `DESIGN_NOTES.md` are present, so a
-/// shipped behavior that departs from the plan can't silently drop out of the
-/// changelog.
+/// entries (8–15) are present in `DESIGN_NOTES.md`.
+///
+/// So a shipped behavior that departs from the plan can't silently drop out
+/// of the changelog.
 ///
 /// A presence test in the spirit of `ReadmeSnippetTests`: it reads
 /// `DESIGN_NOTES.md` from the package root (via the shared
@@ -21,8 +22,9 @@ import Testing
 /// new, one per behavior the detach work introduced.
 @Suite("DESIGN_NOTES departures presence")
 struct DesignNotesTests {
-    /// One distinctive phrase per departure entry (8–15); each must appear
-    /// verbatim in `DESIGN_NOTES.md`.
+    /// One distinctive phrase per departure entry (8–15).
+    ///
+    /// Each phrase must appear verbatim in `DESIGN_NOTES.md`.
     private static let requiredPhrases = [
         "arrival-order interleaving",  // 8. batch-at-exit log append (superseded) — streaming ordering contract
         "races stream EOF",  // 9. post-stream group-kill / timeout races EOF

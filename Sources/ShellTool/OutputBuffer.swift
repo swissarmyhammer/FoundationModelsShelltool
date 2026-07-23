@@ -4,9 +4,11 @@
 // A direct behavioral port of the Rust `OutputBuffer`
 // (`swissarmyhammer-tools` `mcp/tools/shell/infrastructure.rs`):
 //
-//   - One `maxSize` cap shared across stdout + stderr (`currentSize` is the sum
-//     of both stored buffers). Bytes past the cap are dropped, but every byte is
-//     counted in `totalBytesProcessed`.
+//   - One `maxSize` cap shared across stdout + stderr, tracked by the
+//     cumulative `storedByteCount` (flushed-out lines plus whatever is still
+//     resident) rather than the momentary `currentSize` — see below. Bytes
+//     past the cap are dropped, but every byte is counted in
+//     `totalBytesProcessed`.
 //   - Truncation prefers a line boundary: the last `\n` in the fitting prefix,
 //     else a UTF-8 code-point boundary, so a stored buffer is never cut through
 //     a multi-byte scalar.
@@ -15,10 +17,30 @@
 //     `[Binary content: {n} bytes]` instead of its raw bytes.
 //   - No ANSI stripping — output is stored raw (parity).
 //
-// `ShellRunner` feeds this buffer the raw stdout/stderr chunks and then hands
-// its `stdoutLines` / `stderrLines` to `ShellState.appendLines`. Lines are
-// derived exactly the way `ShellState` scans the log back (`\n` split, trailing
-// `\r` dropped) so what is stored round-trips identically.
+// Two ways to read the buffer back out, both exercised by `ShellRunner`:
+//
+//   - Batch: append everything, then read `stdoutLines`/`stderrLines` once at
+//     the end. `ExecuteCommand`'s completed-command tail assembly relies on the
+//     underlying `ShellState` log this eventually feeds, not on this API
+//     directly.
+//   - Incremental: `extractCompletedStdoutLines()`/`extractCompletedStderrLines()`
+//     drain each stream's *completed* lines (up to the last `\n` seen so far)
+//     as chunks arrive, leaving any trailing partial line buffered; `finish()`
+//     seals the buffer at end-of-stream, flushing that trailing partial line
+//     (or, if truncated/binary, a marker/placeholder line instead). This is
+//     what lets `ShellRunner` stream a still-running command's output into
+//     `ShellState` incrementally (see its file header).
+//
+// Because extraction can drain bytes back out of `stdoutData`/`stderrData`,
+// the cap can no longer be enforced against `currentSize` (the momentarily
+// resident byte count) — a flush would silently reopen room under the cap.
+// `storedByteCount` is the monotonic, cumulative counter used instead: it only
+// grows, by exactly the bytes actually accepted into storage (dropped bytes
+// don't count, matching `truncated`), independent of what has since been
+// extracted.
+//
+// Lines are derived exactly the way `ShellState` scans the log back (`\n`
+// split, trailing `\r` dropped) so what is stored round-trips identically.
 
 import Foundation
 
@@ -43,6 +65,14 @@ struct OutputBuffer {
     private(set) var binaryDetected = false
     /// Count of all bytes seen, including bytes dropped past the cap.
     private(set) var totalBytesProcessed = 0
+    /// Cumulative bytes actually accepted into storage — flushed out via
+    /// `extractCompletedStdoutLines()`/`extractCompletedStderrLines()` plus
+    /// whatever is still resident in `stdoutData`/`stderrData`. Monotonic: it
+    /// only grows, and never shrinks when a flush drains the resident buffers.
+    /// This — not `currentSize` — is what `append` checks against `maxSize`,
+    /// so the cap keeps enforcing across incremental flushes (see the file
+    /// header).
+    private(set) var storedByteCount = 0
 
     /// Create a buffer with the given shared byte cap.
     init(maxSize: Int) {
@@ -90,7 +120,11 @@ struct OutputBuffer {
             binaryDetected = true
         }
 
-        let available = max(0, maxSize - currentSize)
+        // Cumulative, not `currentSize`: a prior incremental flush may have
+        // already drained bytes back out of the resident buffers, and the cap
+        // must stay enforced against everything ever stored, not just what
+        // happens to still be resident (see the file header).
+        let available = max(0, maxSize - storedByteCount)
         if available == 0 {
             truncated = true
             return 0
@@ -107,6 +141,7 @@ struct OutputBuffer {
             : bytesToAppend
 
         self[keyPath: keyPath].append(contentsOf: data[0..<actual])
+        storedByteCount += actual
         return actual
     }
 
@@ -150,6 +185,101 @@ struct OutputBuffer {
     private static func trimBuffer(_ buffer: inout [UInt8], neededSpace: Int) {
         buffer.removeLast(min(neededSpace, buffer.count))
         trimToLineBoundary(&buffer)
+    }
+
+    // MARK: - Incremental completed-line extraction
+
+    /// Extract stdout bytes completed since the last extraction — everything
+    /// up to and including the last `\n` currently buffered — as decoded log
+    /// lines, leaving any trailing partial line (no closing `\n` yet) buffered
+    /// for a later call or `finish()`. Yields nothing once `binaryDetected` has
+    /// flipped: binary content stops flowing incrementally, and `finish()`
+    /// emits the single placeholder line instead (see the file header).
+    @discardableResult
+    mutating func extractCompletedStdoutLines() -> [String] {
+        extractCompletedLines(from: \.stdoutData)
+    }
+
+    /// The stderr counterpart of `extractCompletedStdoutLines()`.
+    @discardableResult
+    mutating func extractCompletedStderrLines() -> [String] {
+        extractCompletedLines(from: \.stderrData)
+    }
+
+    /// Shared implementation behind `extractCompletedStdoutLines()`/
+    /// `extractCompletedStderrLines()`: finds the last `\n` in the stream at
+    /// `keyPath`, splits everything up to and including it into log lines, and
+    /// leaves the remainder (the trailing partial line, if any) in place.
+    /// Extraction only moves bytes out of the resident buffer — it never
+    /// touches `storedByteCount`, so the cap stays enforced cumulatively.
+    private mutating func extractCompletedLines(
+        from keyPath: WritableKeyPath<OutputBuffer, [UInt8]>
+    ) -> [String] {
+        guard !binaryDetected else { return [] }
+        let data = self[keyPath: keyPath]
+        guard let cut = data.lastIndex(of: Self.newlineByte) else { return [] }
+
+        let lines = Self.splitLogLines(data[data.startIndex...cut])
+        self[keyPath: keyPath] = Array(data[data.index(after: cut)...])
+        return lines
+    }
+
+    // MARK: - Sealing at end-of-stream
+
+    /// The lines still owed to the log when `finish()` seals the buffer: each
+    /// stream's trailing partial line (if the buffer wasn't binary or
+    /// truncated), or the truncation-marker/binary-placeholder line otherwise.
+    /// Both arrays are typically single lines — `ShellRunner` appends them via
+    /// `ShellState.appendLines` exactly like any other incremental flush.
+    struct FinalLines: Sendable, Equatable {
+        /// Stdout line(s) owed at end-of-stream.
+        var stdout: [String] = []
+        /// Stderr line(s) owed at end-of-stream.
+        var stderr: [String] = []
+    }
+
+    /// Seal the buffer at end-of-stream. No further `append`/
+    /// `extractCompleted*Lines` calls are expected afterward.
+    ///
+    /// - If binary content was detected, both streams' resident bytes are
+    ///   discarded and a single `[Binary content: {n} bytes]` line is
+    ///   returned, sized by the cumulative `storedByteCount` — not either
+    ///   stream's own (now mostly-drained) resident byte count, which by this
+    ///   point reflects only whatever hasn't yet been incrementally flushed.
+    /// - Otherwise, each stream's still-buffered trailing partial line (text
+    ///   with no closing `\n`) is flushed. If output was truncated, the
+    ///   truncation-marker line is appended after whichever stream has a
+    ///   trailing line (preferring stdout, matching `addTruncationMarker`'s
+    ///   stdout-first preference), or into `stdout` if neither stream has one.
+    mutating func finish() -> FinalLines {
+        if binaryDetected {
+            stdoutData = []
+            stderrData = []
+            return FinalLines(stdout: ["[Binary content: \(storedByteCount) bytes]"])
+        }
+
+        var result = FinalLines()
+        if !stdoutData.isEmpty {
+            result.stdout = Self.splitLogLines(stdoutData)
+            stdoutData = []
+        }
+        if !stderrData.isEmpty {
+            result.stderr = Self.splitLogLines(stderrData)
+            stderrData = []
+        }
+
+        if truncated {
+            let marker = "[Output truncated - exceeded size limit]"
+            if !result.stdout.isEmpty {
+                result.stdout.append(marker)
+            } else if !result.stderr.isEmpty {
+                result.stderr.append(marker)
+            } else {
+                result.stdout.append(marker)
+            }
+        }
+
+        return result
     }
 
     // MARK: - Helpers

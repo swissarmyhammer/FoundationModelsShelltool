@@ -87,7 +87,9 @@ internal struct KillResult: Encodable, Sendable, Equatable {
     /// The command string that was killed.
     let command: String
     /// Stored output lines recorded for the command at the moment it was
-    /// killed. Because output is recorded when a command finishes, a command
-    /// killed while still streaming reports `0` here.
+    /// killed. Output is recorded incrementally as it streams in (see
+    /// `ShellRunner`'s single-consumer flush), so a command killed mid-stream
+    /// reports whatever lines had already landed in `ShellState` before the
+    /// kill — no longer always `0`.
     let linesCaptured: Int
 }

@@ -189,9 +189,15 @@ actor ShellState {
         return index
     }
 
-    /// Append captured output for a command to the log — every `stdout` line
-    /// then every `stderr` line, sharing one continuing 1-based per-command
-    /// line counter, each stored as `{sessionID}:{cmdID}:{lineNumber}:{text}\n`.
+    /// Append captured output for a command to the log: within one call, every
+    /// `stdout` line is written before that call's `stderr` lines. `ShellRunner`
+    /// now calls this incrementally as chunks arrive — typically with just one
+    /// stream populated per call — so a still-running command's output becomes
+    /// visible to `getLines`/`grep` before it exits, and the overall order
+    /// across calls is arrival order, not "every stdout line, then every
+    /// stderr line" for the command as a whole. Every call shares one
+    /// continuing 1-based per-command line counter (it keeps counting across
+    /// calls), each line stored as `{sessionID}:{cmdID}:{lineNumber}:{text}\n`.
     func appendLines(commandID: Int, stdout: [String] = [], stderr: [String] = []) throws {
         let index = try commandIndex(commandID: commandID)
 

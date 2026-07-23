@@ -213,21 +213,93 @@ import Testing
         #expect(lines == [LogLine(lineNumber: 1, text: "[Binary content: 7 bytes]")])
     }
 
-    // MARK: - Interleaving: stdout lines precede stderr, one shared counter
+    // MARK: - Interleaving: incremental flush preserves arrival order, one shared counter
 
-    @Test func stdoutLinesPrecedeStderrLinesInTheLog() async throws {
+    /// With deliberate gaps between each write (so the two stream readers each
+    /// have time to drain and flush before the next write lands), the stored
+    /// order matches arrival order exactly — stdout and stderr interleaved, not
+    /// grouped. Supersedes the old batch-at-exit "stdout always precedes
+    /// stderr" contract (DESIGN_NOTES §8).
+    @Test func stdoutAndStderrInterleaveInArrivalOrderWithAlternatingWrites() async throws {
         let (runner, state, tmp) = try makeRunner()
         defer { try? FileManager.default.removeItem(at: tmp) }
 
-        let outcome = try await runner.run(
-            .init(command: "echo out1; echo err1 >&2; echo out2; echo err2 >&2"))
+        let command = """
+            printf 'out1\\n'; sleep 0.05
+            printf 'err1\\n' >&2; sleep 0.05
+            printf 'out2\\n'; sleep 0.05
+            printf 'err2\\n' >&2
+            """
+        let outcome = try await runner.run(.init(command: command))
         let lines = try await state.getLines(commandID: outcome.commandID)
         #expect(lines == [
             LogLine(lineNumber: 1, text: "out1"),
-            LogLine(lineNumber: 2, text: "out2"),
-            LogLine(lineNumber: 3, text: "err1"),
+            LogLine(lineNumber: 2, text: "err1"),
+            LogLine(lineNumber: 3, text: "out2"),
             LogLine(lineNumber: 4, text: "err2"),
         ])
+    }
+
+    // MARK: - Incremental recording: output visible while the command is still running
+
+    @Test func linesAreVisibleInShellStateWhileTheCommandIsStillRunning() async throws {
+        let (runner, state, tmp) = try makeRunner()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let runTask = Task {
+            try await runner.run(.init(command: "echo one; sleep 5"))
+        }
+        defer {
+            runTask.cancel()
+        }
+
+        // Poll until the emitted line shows up — well before the sleep ends.
+        var lines: [LogLine] = []
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(3))
+        while lines.isEmpty, clock.now < deadline {
+            lines = try await state.getLines(commandID: 1)
+            if lines.isEmpty { try? await Task.sleep(for: .milliseconds(25)) }
+        }
+        #expect(lines == [LogLine(lineNumber: 1, text: "one")])
+
+        // The command record must still show `running` at this point — the
+        // line landed well before the child exits.
+        let record = await state.listCommands().first
+        #expect(record?.status == .running)
+
+        runTask.cancel()
+        _ = try? await runTask.value
+    }
+
+    @Test func killProcessMidStreamCapturesLinesEmittedBeforeTheKill() async throws {
+        let (runner, state, tmp) = try makeRunner()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let runTask = Task {
+            try await runner.run(.init(command: "echo captured; sleep 30"))
+        }
+        defer {
+            runTask.cancel()
+        }
+
+        // Wait for the emitted line to land before killing, so the kill
+        // genuinely races against already-flushed output, not empty output.
+        var lines: [LogLine] = []
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(3))
+        while lines.isEmpty, clock.now < deadline {
+            lines = try await state.getLines(commandID: 1)
+            if lines.isEmpty { try? await Task.sleep(for: .milliseconds(25)) }
+        }
+        #expect(!lines.isEmpty)
+
+        let record = try await state.killProcess(commandID: 1)
+        #expect(record.status == .killed)
+        #expect(record.lineCount > 0)
+
+        runTask.cancel()
+        _ = try? await runTask.value
     }
 
     // MARK: - Timeout wall-clock and the no-timeout default

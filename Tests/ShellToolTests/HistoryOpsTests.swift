@@ -66,6 +66,42 @@ import Testing
         #expect(response.contains("\"text\":\"MARK\""))
     }
 
+    // MARK: - grep history: sees a still-running command's incrementally recorded output
+
+    /// `grep history` must see output recorded incrementally while the
+    /// producing command is still running, not just after it exits — the
+    /// other half of the batch-at-exit supersede (DESIGN_NOTES §8) alongside
+    /// `get lines`.
+    @Test func grepHistorySeesARunningCommandsOutputBeforeItFinishes() async throws {
+        let tool = try makeTool()
+
+        let running = Task {
+            try await tool.call(
+                arguments: GeneratedContent(properties: [
+                    "op": "execute command", "command": "echo MARK; sleep 5",
+                ]))
+        }
+        defer { running.cancel() }
+
+        // Poll `grep history` until the still-running command's output shows up.
+        var response = ""
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(3))
+        repeat {
+            response = try await tool.call(
+                arguments: GeneratedContent(properties: [
+                    "op": "grep history", "pattern": "MARK",
+                ]))
+            if !response.contains("\"total\":1") { try? await Task.sleep(for: .milliseconds(25)) }
+        } while !response.contains("\"total\":1") && clock.now < deadline
+
+        #expect(response.contains("\"total\":1"))
+        #expect(response.contains("MARK"))
+
+        running.cancel()
+        _ = try? await running.value
+    }
+
     // MARK: - grep history: invalid regex → corrective, not a throw
 
     @Test func grepHistoryWithInvalidRegexReturnsCorrectiveMessageNotAThrow() async throws {

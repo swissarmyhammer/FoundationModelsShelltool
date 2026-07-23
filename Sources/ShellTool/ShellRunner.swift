@@ -9,6 +9,21 @@
 // by swift-subprocess's `reapProcess`, which runs on every return path of its
 // `run(...)`; the runner only has to guarantee the group is killed so that
 // `run` can return (via a `defer`'d group-kill and an `onCancel` group-kill).
+//
+// Output recording is incremental, not batch-at-exit: the two stream readers
+// (stdout, stderr) each funnel their raw chunks into one shared `AsyncStream`,
+// and a single consumer task (`consume(_:state:commandID:maxSize:)`) drains
+// that stream strictly in arrival order, extracting each chunk's newly
+// completed lines from a private `OutputBuffer` and flushing them to
+// `ShellState.appendLines` before looking at the next chunk. Funneling through
+// one consumer — rather than having each stream reader extract-and-flush
+// through a shared actor directly — is deliberate: a Swift actor is reentrant
+// across suspension points, and its mailbox order across two different
+// callers is not documented FIFO, so two producers each independently calling
+// `await state.appendLines(...)` could have their flushes land out of arrival
+// order. A single sequential consumer has no such race: only it ever touches
+// the buffer or calls `appendLines`, one call at a time, in the order it
+// dequeues chunks from the stream.
 
 import Foundation
 import Subprocess
@@ -75,10 +90,23 @@ struct ShellRunner {
     }
 
     /// Which concurrent child task in `run`'s task group just completed: a
-    /// stream reader reaching EOF, or the optional timeout timer elapsing.
+    /// stream reader reaching EOF, the incremental-flush consumer draining and
+    /// sealing the buffer, or the optional timeout timer elapsing.
     private enum BodyEvent: Sendable {
         case streamFinished
+        case consumerFinished
         case timerFinished
+    }
+
+    /// One raw chunk read from a child's stdout or stderr, tagged by stream
+    /// and funneled through a single `AsyncStream` so `consume(_:state:
+    /// commandID:maxSize:)` extracts and flushes completed lines strictly in
+    /// arrival order (see the file header).
+    private struct StreamChunk: Sendable {
+        /// Whether `bytes` came from stdout (`true`) or stderr (`false`).
+        let isStdout: Bool
+        /// The raw bytes read from the stream.
+        let bytes: [UInt8]
     }
 
     /// Run `request` to completion, returning its outcome.
@@ -117,12 +145,23 @@ struct ShellRunner {
                 // is a harmless ESRCH.
                 defer { _ = killpg(pid, SIGKILL) }
 
-                let collector = OutputCollector(maxSize: maxOutputSize)
+                let (chunkStream, chunkContinuation) = AsyncStream<StreamChunk>.makeStream()
                 try await withThrowingTaskGroup(of: BodyEvent.self) { group in
                     let out = execution.standardOutput
                     let err = execution.standardError
-                    group.addTask { await Self.drain(out, into: collector, isStdout: true); return .streamFinished }
-                    group.addTask { await Self.drain(err, into: collector, isStdout: false); return .streamFinished }
+                    group.addTask {
+                        await Self.drain(out, isStdout: true, into: chunkContinuation)
+                        return .streamFinished
+                    }
+                    group.addTask {
+                        await Self.drain(err, isStdout: false, into: chunkContinuation)
+                        return .streamFinished
+                    }
+                    group.addTask {
+                        try await Self.consume(
+                            chunkStream, state: st, commandID: commandID, maxSize: maxOutputSize)
+                        return .consumerFinished
+                    }
                     if let timeout {
                         group.addTask {
                             if (try? await Task.sleep(for: timeout)) != nil {
@@ -132,22 +171,32 @@ struct ShellRunner {
                             return .timerFinished
                         }
                     }
+
+                    // Both readers hitting EOF ends the chunk stream (so the
+                    // consumer can drain the last chunks, seal the buffer, and
+                    // return); only once the consumer has ALSO finished is
+                    // there nothing left to wait for — cancelling any still-
+                    // pending timer at that point (post-stream-EOF races the
+                    // timeout, matching the existing `run` semantics).
                     var streamsDone = 0
+                    var consumerDone = false
                     while let event = try await group.next() {
-                        if case .streamFinished = event { streamsDone += 1 }
-                        if streamsDone == 2 {
+                        switch event {
+                        case .streamFinished:
+                            streamsDone += 1
+                            if streamsDone == 2 { chunkContinuation.finish() }
+                        case .consumerFinished:
+                            consumerDone = true
+                        case .timerFinished:
+                            break
+                        }
+                        if streamsDone == 2, consumerDone {
                             group.cancelAll()
                             break
                         }
                     }
                 }
 
-                // Record whatever was captured (partial output on timeout is
-                // still recorded): stdout lines first, then stderr, one shared
-                // per-command counter (`ShellState.appendLines`).
-                let buffer = await collector.finish()
-                try await st.appendLines(
-                    commandID: commandID, stdout: buffer.stdoutLines, stderr: buffer.stderrLines)
                 return timedOutFlag.withLock { $0 }
             }
         } onCancel: {
@@ -204,21 +253,18 @@ struct ShellRunner {
         return Environment.inherit.updating(updates)
     }
 
-    /// Drain a subprocess output stream to EOF, feeding each raw byte chunk into
-    /// `collector`. Kept reading past the buffer's cap so a chunky writer never
-    /// blocks on a full pipe; the collector simply discards the overflow.
+    /// Drain a subprocess output stream to EOF, tagging each raw byte chunk
+    /// with its stream and yielding it into `continuation`. Kept reading past
+    /// the buffer's cap so a chunky writer never blocks on a full pipe; the
+    /// consumer's `OutputBuffer` simply discards the overflow.
     private static func drain(
-        _ sequence: SubprocessOutputSequence, into collector: OutputCollector, isStdout: Bool
+        _ sequence: SubprocessOutputSequence, isStdout: Bool, into continuation: AsyncStream<StreamChunk>.Continuation
     ) async {
         do {
             for try await chunk in sequence {
                 let bytes = chunk.withUnsafeBytes { Array($0) }
                 guard !bytes.isEmpty else { continue }
-                if isStdout {
-                    await collector.appendStdout(bytes)
-                } else {
-                    await collector.appendStderr(bytes)
-                }
+                continuation.yield(StreamChunk(isStdout: isStdout, bytes: bytes))
             }
         } catch {
             // A read cancelled by the library's termination monitor (an inherited
@@ -226,41 +272,38 @@ struct ShellRunner {
             // thrown error; treat it as end-of-stream.
         }
     }
-}
 
-/// Serializes the two concurrent stream readers' writes into one `OutputBuffer`,
-/// so the shared size cap is enforced across stdout and stderr without a data
-/// race on the buffer.
-private actor OutputCollector {
-    /// The single buffer both stream readers write through, so the shared cap
-    /// is enforced across stdout and stderr.
-    private var buffer: OutputBuffer
+    /// Drain `stream`'s chunks strictly in the order they were yielded,
+    /// extracting each chunk's newly completed lines from a private
+    /// `OutputBuffer` and flushing them to `state.appendLines` before looking
+    /// at the next chunk — no concurrent caller ever touches the buffer or
+    /// calls `appendLines`, so nothing can reorder the flushes (see the file
+    /// header). Once `stream` ends (both readers at EOF), seals the buffer via
+    /// `OutputBuffer.finish()` and flushes its trailing partial line(s) and
+    /// truncation-marker/binary-placeholder line.
+    private static func consume(
+        _ stream: AsyncStream<StreamChunk>, state: ShellState, commandID: Int, maxSize: Int
+    ) async throws {
+        var buffer = OutputBuffer(maxSize: maxSize)
+        for await chunk in stream {
+            let lines: [String]
+            if chunk.isStdout {
+                buffer.appendStdout(chunk.bytes)
+                lines = buffer.extractCompletedStdoutLines()
+            } else {
+                buffer.appendStderr(chunk.bytes)
+                lines = buffer.extractCompletedStderrLines()
+            }
+            guard !lines.isEmpty else { continue }
+            if chunk.isStdout {
+                try await state.appendLines(commandID: commandID, stdout: lines)
+            } else {
+                try await state.appendLines(commandID: commandID, stderr: lines)
+            }
+        }
 
-    /// Create a collector whose buffer caps combined output at `maxSize` bytes.
-    ///
-    /// - Parameter maxSize: total captured-output cap in bytes, shared across
-    ///   stdout and stderr.
-    init(maxSize: Int) {
-        buffer = OutputBuffer(maxSize: maxSize)
-    }
-
-    /// Append a raw stdout byte chunk to the buffer.
-    ///
-    /// - Parameter data: the raw bytes read from the child's stdout.
-    func appendStdout(_ data: [UInt8]) {
-        buffer.appendStdout(data)
-    }
-
-    /// Append a raw stderr byte chunk to the buffer.
-    ///
-    /// - Parameter data: the raw bytes read from the child's stderr.
-    func appendStderr(_ data: [UInt8]) {
-        buffer.appendStderr(data)
-    }
-
-    /// Seal the buffer with a truncation marker (if truncated) and return it.
-    func finish() -> OutputBuffer {
-        buffer.addTruncationMarker()
-        return buffer
+        let final = buffer.finish()
+        guard !final.stdout.isEmpty || !final.stderr.isEmpty else { return }
+        try await state.appendLines(commandID: commandID, stdout: final.stdout, stderr: final.stderr)
     }
 }

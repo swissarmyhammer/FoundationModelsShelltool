@@ -69,10 +69,10 @@ import Testing
     @Test func killProcessStopsARunningCommandAndFlipsTheRecordToKilled() async throws {
         let tool = try makeTool()
         let pattern = Self.uniqueSleep()
-        // Emit a line, THEN block. The command has produced real output, but
-        // `ShellRunner` records captured lines only once the streams drain on
-        // completion — so `linesCaptured` at kill time genuinely exercises the
-        // recorded-on-completion rule rather than trivially counting nothing.
+        // Emit a line, THEN block. Output is now recorded incrementally as it
+        // streams in, so the emitted line is already flushed to `ShellState`
+        // well before the sleep — this exercises the mid-stream-capture rule
+        // rather than trivially counting nothing.
         let command = "echo captured-line; \(pattern)"
         let running = Task {
             try await tool.call(
@@ -85,11 +85,20 @@ import Testing
 
         #expect(try await waitUntil { Self.pgrepCount(pattern) > 0 })
 
+        // Wait for the incremental flush to actually land before killing, so
+        // the assertion below isn't racing the flush.
+        #expect(
+            try await waitUntil {
+                let listed = try await tool.call(
+                    arguments: GeneratedContent(properties: ["op": "list processes"]))
+                return listed.contains("\"lineCount\":1")
+            })
+
         let (response, _) = try await killPromptly(tool, id: 1)
         #expect(response.contains("\"id\":1"))
         #expect(response.contains("\"command\":\"\(command)\""))
-        // The emitted line is not yet recorded, so the kill reports zero.
-        #expect(response.contains("\"linesCaptured\":0"))
+        // The emitted line was already flushed incrementally before the kill.
+        #expect(response.contains("\"linesCaptured\":1"))
 
         // The record must now read `killed`.
         let listed = try await tool.call(
@@ -102,8 +111,8 @@ import Testing
         running.cancel()
         _ = try? await running.value
 
-        // Once the command has finished, its emitted line IS recorded — proving
-        // the kill-time `0` reflected recorded-on-completion, not absent output.
+        // The line count is unchanged after the kill — the sleep after the
+        // echo never emitted anything more to flush.
         let afterDrain = try await tool.call(
             arguments: GeneratedContent(properties: ["op": "list processes"]))
         #expect(afterDrain.contains("\"lineCount\":1"))

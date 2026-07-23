@@ -112,4 +112,102 @@ import Testing
         _ = buffer.appendStdout(bytes("carriage\r\nplain\n"))
         #expect(buffer.stdoutLines == ["carriage", "plain"])
     }
+
+    // MARK: - Incremental completed-line extraction
+
+    @Test func extractCompletedStdoutLinesHoldsBackThePartialLineUntilItCompletes() {
+        var buffer = OutputBuffer(maxSize: 1000)
+        _ = buffer.appendStdout(bytes("first\nsecond-par"))
+        #expect(buffer.extractCompletedStdoutLines() == ["first"])
+        // The trailing partial line has no `\n` yet — nothing new to extract.
+        #expect(buffer.extractCompletedStdoutLines() == [])
+
+        _ = buffer.appendStdout(bytes("tial\nthird\n"))
+        #expect(buffer.extractCompletedStdoutLines() == ["second-partial", "third"])
+    }
+
+    @Test func extractCompletedStderrLinesIsIndependentOfStdout() {
+        var buffer = OutputBuffer(maxSize: 1000)
+        _ = buffer.appendStdout(bytes("out-only\n"))
+        _ = buffer.appendStderr(bytes("err-only\n"))
+        #expect(buffer.extractCompletedStderrLines() == ["err-only"])
+        #expect(buffer.extractCompletedStdoutLines() == ["out-only"])
+    }
+
+    @Test func extractCompletedStdoutLinesReturnsEmptyWhenNoNewlineHasArrivedYet() {
+        var buffer = OutputBuffer(maxSize: 1000)
+        _ = buffer.appendStdout(bytes("no newline at all"))
+        #expect(buffer.extractCompletedStdoutLines() == [])
+    }
+
+    // MARK: - Cumulative stored-bytes cap (distinct from totalBytesProcessed)
+
+    @Test func storedByteCountIsCumulativeAndSurvivesExtraction() {
+        var buffer = OutputBuffer(maxSize: 1000)
+        _ = buffer.appendStdout(bytes("abc\n"))  // 4 bytes
+        _ = buffer.extractCompletedStdoutLines()
+        // Extraction drains the resident buffer back toward empty…
+        #expect(buffer.currentSize == 0)
+        // …but the cumulative counter still remembers those 4 bytes were stored.
+        #expect(buffer.storedByteCount == 4)
+    }
+
+    @Test func cumulativeCapStaysEnforcedAcrossIncrementalFlushes() {
+        // Cap of 10 bytes. Flushing the first chunk out via extraction drains
+        // `currentSize` back toward 0 — but the cap must still be tracked
+        // cumulatively, so a chatty command can't reopen room under the cap by
+        // having its lines flushed out from under it.
+        var buffer = OutputBuffer(maxSize: 10)
+        _ = buffer.appendStdout(bytes("aaaaa\n"))  // 6 bytes
+        _ = buffer.extractCompletedStdoutLines()
+        #expect(buffer.currentSize == 0)
+
+        let written = buffer.appendStdout(bytes("bbbbbbbbbb\n"))  // 11 bytes; only 4 should fit
+        #expect(written <= 4)
+        #expect(buffer.truncated)
+    }
+
+    // MARK: - Binary detection suppresses further incremental extraction
+
+    @Test func binaryDetectionStopsFurtherIncrementalExtractionOnBothStreams() {
+        var buffer = OutputBuffer(maxSize: 1000)
+        _ = buffer.appendStdout([0x00] + bytes("bin\n"))
+        #expect(buffer.binaryDetected)
+        #expect(buffer.extractCompletedStdoutLines() == [])
+
+        _ = buffer.appendStderr(bytes("more\n"))
+        #expect(buffer.extractCompletedStderrLines() == [])
+    }
+
+    // MARK: - finish(): trailing partial line + truncation marker as its own line
+
+    @Test func finishFlushesTheTrailingPartialLineWithNoClosingNewline() {
+        var buffer = OutputBuffer(maxSize: 1000)
+        _ = buffer.appendStdout(bytes("complete\nno-newline-yet"))
+        #expect(buffer.extractCompletedStdoutLines() == ["complete"])
+
+        let final = buffer.finish()
+        #expect(final.stdout == ["no-newline-yet"])
+        #expect(final.stderr == [])
+    }
+
+    @Test func finishAppendsTheTruncationMarkerAsItsOwnLine() {
+        var buffer = OutputBuffer(maxSize: 12)
+        _ = buffer.appendStdout(bytes("line1\nline2\nline3\n"))  // exceeds the cap
+        _ = buffer.extractCompletedStdoutLines()
+        #expect(buffer.truncated)
+
+        let final = buffer.finish()
+        #expect(final.stdout.last == "[Output truncated - exceeded size limit]")
+    }
+
+    @Test func finishEmitsOneBinaryPlaceholderLineUsingTheCumulativeStoredByteCount() {
+        var buffer = OutputBuffer(maxSize: 1000)
+        _ = buffer.appendStdout([0x00] + bytes("abc\n"))  // 5 bytes; null triggers binary
+        _ = buffer.appendStderr(bytes("more\n"))  // 5 more bytes, still stored (cumulative)
+
+        let final = buffer.finish()
+        #expect(final.stdout == ["[Binary content: 10 bytes]"])
+        #expect(final.stderr == [])
+    }
 }

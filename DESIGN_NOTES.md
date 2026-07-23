@@ -98,20 +98,29 @@ the plan (§3/§4/§8) or from the Rust tool but were not recorded when they wer
 made. They are captured here so the plan's "deliberate departures are few and
 recorded" principle holds for the shipped code, not just the design.
 
-### 8. Batch-at-exit log append
+### 8. Batch-at-exit log append (superseded)
 
-`ShellRunner` collects a command's output in an `OutputCollector` and calls
-`ShellState.appendLines` **once**, after both the stdout and stderr streams have
+**Superseded** by incremental recording (kanban task `01KY57R5GC12AQJ439NS9RENTY`
+/ `s9renty`): `ShellRunner` now streams each chunk's newly completed lines into
+`ShellState.appendLines` as they arrive — via a single consumer task that drains
+one shared `AsyncStream` funnel fed by the two stream readers, so extraction and
+the flush call are never split across concurrent callers (see the file header of
+`Sources/ShellTool/ShellRunner.swift`) — rather than batching everything into one
+`appendLines` call at exit. This closes the gap this entry originally described:
+a command killed *mid-stream* now reports whatever lines had already streamed in
+before the kill, not always `0` (`KillResult.linesCaptured`,
+`Sources/ShellTool/Operations/KillProcess.swift`). The original entry is kept
+below for history.
+
+`ShellRunner` used to collect a command's output in an `OutputCollector` and call
+`ShellState.appendLines` **once**, after both the stdout and stderr streams had
 closed (the `collector.finish()` → `appendLines` sequence in
 `Sources/ShellTool/ShellRunner.swift`), rather than streaming each line into the
 log incrementally as the plan's "stream stdout+stderr into the log" wording and
-the Rust guard do. Batching at exit keeps the shared per-command line counter
+the Rust guard do. Batching at exit kept the shared per-command line counter
 free of a concurrent-write race between the two stream readers, at the cost of
-one property: a command killed *mid-stream* has recorded no lines yet, so
-`KillResult.linesCaptured` is `0`. That consequence is already called out in the
-`KillResult.linesCaptured` doc comment in
-`Sources/ShellTool/Operations/KillProcess.swift`; this entry is the design-level
-cross-reference for it.
+one property: a command killed *mid-stream* had recorded no lines yet, so
+`KillResult.linesCaptured` was `0`.
 
 ### 9. Post-stream group-kill / timeout races stream EOF
 

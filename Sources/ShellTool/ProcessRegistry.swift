@@ -124,10 +124,12 @@ extension ProcessRegistry {
     /// replace, `ShellRunner`'s own per-run `defer` teardown, which is what
     /// actually guarantees a spawned child's group dies on every ordinary run
     /// exit path (normal completion, timeout, cancellation, or a thrown
-    /// error) long before the process itself ever exits. This registry only
-    /// ever has something to sweep in the gap between a future caller
-    /// detaching a command from that per-run teardown and the process
-    /// exiting — today, nothing leaves an entry behind for it to find.
+    /// error) long before the process itself ever exits. This registry has
+    /// something to sweep exactly when a command detached via `waitSeconds`
+    /// is still running as the process exits normally: a detached command's
+    /// pid stays registered until its supervision body's `defer` teardown
+    /// runs, so a normal exit mid-detach is precisely the gap the sweep
+    /// closes (DESIGN_NOTES §15).
     ///
     /// Never reach for this in a test: swift-testing runs a package's test
     /// suites concurrently in one process, so sweeping this shared registry

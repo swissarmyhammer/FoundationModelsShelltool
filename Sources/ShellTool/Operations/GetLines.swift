@@ -80,7 +80,9 @@ extension GetLines {
     /// record ever matches `.running`), or there is no time left on the
     /// deadline (including no `waitSeconds` at all, which never engages the
     /// wait). Only when none of those hold does the loop sleep
-    /// `pollInterval` and re-read.
+    /// `pollInterval` and re-read. Cancellation of the awaiting task ends
+    /// the wait the same way the deadline does: the current snapshot is
+    /// returned promptly, never a hot zero-delay re-read loop.
     func execute(in context: ShellContext) async throws -> GetLinesOutput {
         if let waitSeconds, waitSeconds < 0 {
             return .corrective("waitSeconds must be non-negative")
@@ -99,7 +101,16 @@ extension GetLines {
                 return .found(Self.result(commandID: commandID, lines: lines, status: status))
             }
 
-            try? await Task.sleep(for: Self.pollInterval)
+            do {
+                try await Task.sleep(for: Self.pollInterval)
+            } catch {
+                // Cancelled mid-sleep. Swallowing this (`try?`) would be a
+                // hot loop: every later sleep on a cancelled task returns
+                // instantly, degrading the remaining wait into zero-delay
+                // re-reads of the actor and log file until the deadline.
+                // Return the current snapshot promptly instead.
+                return .found(Self.result(commandID: commandID, lines: lines, status: status))
+            }
         }
     }
 

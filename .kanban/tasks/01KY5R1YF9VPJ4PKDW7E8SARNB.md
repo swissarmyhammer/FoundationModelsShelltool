@@ -29,10 +29,21 @@ comments:
 
     Leaving in `doing` for `/review` per the implement workflow.
   timestamp: 2026-07-23T23:03:14.321599+00:00
+- actor: claude-code
+  id: 01ky8m6m2cjkeb4m5yezxsq4n6
+  text: |-
+    ## Review Findings (2026-07-23 18:07)
+
+    Scope: `HEAD~1..HEAD` (commit 374da4f). Engine returned 5 findings (5 confirmed, 0 refuted), all in `Tests/ShellToolTests/ShellRunnerTests.swift` (lines 67, 70, 212, 213, 379) recommending `state.listCommands().first { $0.id == commandID }` be replaced with `state.record(commandID:)`.
+
+    Verified via `git diff HEAD~1..HEAD -- Tests/ShellToolTests/ShellRunnerTests.swift`: this commit only *appended* 51 new lines at the end of the file (the throttled-progress tests); it did not touch lines 67, 70, 212, 213, or 379 — those are pre-existing test code from earlier commits. Per the review skill's blanket exception ("Never ask to refactor existing tests"), findings whose subject is changing already-existing test code are dropped rather than relayed. No actionable findings remain from this pass.
+
+    Verdict: clean. Task moved to `done`.
+  timestamp: 2026-07-23T23:15:35.628526+00:00
 depends_on:
 - 01KY57RS5KNHPWKK23SQD0P6VT
-position_column: doing
-position_ordinal: '80'
+position_column: done
+position_ordinal: '9580'
 title: 'ShellTool: post completion and throttled progress events from detached commands'
 ---
 ## What

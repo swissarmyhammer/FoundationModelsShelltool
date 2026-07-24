@@ -500,6 +500,37 @@ import Testing
         _ = try? await running.value
     }
 
+    @Test func getLinesLongPollCancelledMidWaitReturnsPromptlyInsteadOfSpinningToTheDeadline()
+        async throws
+    {
+        let context = try makeContext()
+        let running = Task {
+            try await ShellRunner(state: context.state, registry: ProcessRegistry()).run(.init(command: "sleep 5"))
+        }
+        defer { running.cancel() }
+        try await waitUntilACommandIsRegistered(in: context)
+
+        let operation = try GetLines(
+            GeneratedContent(properties: ["commandID": 1, "waitSeconds": 4]))
+        let clock = ContinuousClock()
+        let start = clock.now
+        let poll = Task { try await operation.execute(in: context) }
+        try await Task.sleep(for: .milliseconds(300))
+        poll.cancel()
+        let output = try await poll.value
+        let elapsed = clock.now - start
+
+        guard case .found(let range) = output else {
+            Issue.record("expected .found, got \(output)")
+            return
+        }
+        #expect(range.lines.isEmpty)
+        #expect(range.status == "running")
+        // Returned promptly after the cancellation, instead of hot-spinning
+        // (zero-delay re-reads) until the full 4s deadline elapsed.
+        #expect(elapsed < .seconds(2))
+    }
+
     @Test func getLinesReturnsPromptlyOnceARunningCommandFinishesWithNoLinesInRange() async throws {
         let context = try makeContext()
         let running = Task {
